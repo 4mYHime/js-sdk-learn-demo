@@ -9,20 +9,45 @@ export default defineConfig({
     port: 3000,
     open: true,
     proxy: {
-      '/api/drama': {
+      '/api/movies': {
+        target: 'https://rt6xvm5qvr.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/movies/, ''),
+      },
+      '/api/templates': {
         target: 'https://y2jtqf58bf.coze.site',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/drama/, ''),
+        rewrite: (path) => path.replace(/^\/api\/templates/, ''),
       },
-      '/api/files': {
-        target: 'https://m83sqwjvdv.coze.site',
+      '/api/bgm': {
+        target: 'https://2b7tgw8s7h.coze.site',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/files/, ''),
+        rewrite: (path) => path.replace(/^\/api\/bgm/, ''),
       },
-      '/api/narrate': {
+      '/api/dubbing': {
+        target: 'https://4cnpfpw2q7.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/dubbing/, ''),
+      },
+      '/api/script': {
         target: 'https://fhwpnktkcp.coze.site',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/narrate/, ''),
+        rewrite: (path) => path.replace(/^\/api\/script/, ''),
+      },
+      '/api/clip': {
+        target: 'https://wsk44rd4dv.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/clip/, ''),
+      },
+      '/api/video': {
+        target: 'https://q77shf4jhf.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/video/, ''),
+      },
+      '/api/status': {
+        target: 'https://fnd4r5gvww.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/status/, ''),
       },
     },
   }

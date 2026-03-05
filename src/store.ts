@@ -1,0 +1,233 @@
+// 订单和任务数据存储模块
+
+// 子任务类型
+export type TaskType = 'script' | 'clip' | 'video';
+export type TaskStatus = 'pending' | 'running' | 'done' | 'error' | 'wait_confirm';
+export type DeliveryMode = 'oneStop' | 'staged';
+export type OrderStatus = 'pending' | 'script' | 'clip' | 'video' | 'done' | 'error';
+
+// 子任务
+export interface ITask {
+  type: TaskType;
+  taskId: string;
+  orderNum: string;
+  status: TaskStatus;
+  pollCount: number;
+  elapsedTime: number;
+  result: any;
+  errorMessage: string;
+  createdAt: number;
+  completedAt: number | null;
+}
+
+// 解说订单
+export interface IOrder {
+  id: string;
+  appKey: string;
+  movieId: number;
+  movieName: string;
+  templateId: string;
+  templateName: string;
+  bgmId: string;
+  bgmName: string;
+  dubbingId: string;
+  dubbingName: string;
+  targetPlatform: string;
+  deliveryMode: DeliveryMode;
+  status: OrderStatus;
+  createdAt: number;
+  updatedAt: number;
+  tasks: ITask[];
+  videoUrl: string;
+  errorMessage: string;
+}
+
+// 生成唯一ID
+export function generateOrderId(): string {
+  return `order_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// 存储键
+const STORAGE_KEY = 'narration_orders';
+const USER_KEY = 'narration_user';
+
+// 获取当前用户
+export function getCurrentUser(): string | null {
+  return localStorage.getItem(USER_KEY);
+}
+
+// 设置当前用户
+export function setCurrentUser(appKey: string): void {
+  localStorage.setItem(USER_KEY, appKey);
+}
+
+// 登出
+export function logout(): void {
+  localStorage.removeItem(USER_KEY);
+}
+
+// 获取所有订单
+export function getAllOrders(): IOrder[] {
+  const data = localStorage.getItem(STORAGE_KEY);
+  if (!data) return [];
+  try {
+    return JSON.parse(data);
+  } catch {
+    return [];
+  }
+}
+
+// 获取当前用户的订单
+export function getUserOrders(appKey: string): IOrder[] {
+  return getAllOrders().filter(order => order.appKey === appKey);
+}
+
+// 获取单个订单
+export function getOrder(orderId: string): IOrder | null {
+  const orders = getAllOrders();
+  return orders.find(o => o.id === orderId) || null;
+}
+
+// 保存订单
+export function saveOrder(order: IOrder): void {
+  const orders = getAllOrders();
+  const index = orders.findIndex(o => o.id === order.id);
+  if (index >= 0) {
+    orders[index] = order;
+  } else {
+    orders.unshift(order); // 新订单放在最前面
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
+}
+
+// 更新订单状态
+export function updateOrderStatus(orderId: string, status: OrderStatus, errorMessage?: string): void {
+  const order = getOrder(orderId);
+  if (order) {
+    order.status = status;
+    order.updatedAt = Date.now();
+    if (errorMessage) {
+      order.errorMessage = errorMessage;
+    }
+    saveOrder(order);
+  }
+}
+
+// 更新订单中的任务
+export function updateOrderTask(orderId: string, task: ITask): void {
+  const order = getOrder(orderId);
+  if (order) {
+    const taskIndex = order.tasks.findIndex(t => t.type === task.type);
+    if (taskIndex >= 0) {
+      order.tasks[taskIndex] = task;
+    } else {
+      order.tasks.push(task);
+    }
+    order.updatedAt = Date.now();
+    saveOrder(order);
+  }
+}
+
+// 设置订单视频URL
+export function setOrderVideoUrl(orderId: string, videoUrl: string): void {
+  const order = getOrder(orderId);
+  if (order) {
+    order.videoUrl = videoUrl;
+    order.status = 'done';
+    order.updatedAt = Date.now();
+    saveOrder(order);
+  }
+}
+
+// 创建新订单
+export function createOrder(params: {
+  appKey: string;
+  movieId: number;
+  movieName: string;
+  templateId: string;
+  templateName: string;
+  bgmId: string;
+  bgmName: string;
+  dubbingId: string;
+  dubbingName: string;
+  targetPlatform: string;
+  deliveryMode: DeliveryMode;
+}): IOrder {
+  const order: IOrder = {
+    id: generateOrderId(),
+    appKey: params.appKey,
+    movieId: params.movieId,
+    movieName: params.movieName,
+    templateId: params.templateId,
+    templateName: params.templateName,
+    bgmId: params.bgmId,
+    bgmName: params.bgmName,
+    dubbingId: params.dubbingId,
+    dubbingName: params.dubbingName,
+    targetPlatform: params.targetPlatform,
+    deliveryMode: params.deliveryMode,
+    status: 'pending',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    tasks: [],
+    videoUrl: '',
+    errorMessage: ''
+  };
+  saveOrder(order);
+  return order;
+}
+
+// 删除订单
+export function deleteOrder(orderId: string): void {
+  const orders = getAllOrders().filter(o => o.id !== orderId);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
+}
+
+// 格式化时间
+export function formatTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+// 格式化耗时
+export function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}秒`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}分${secs}秒`;
+}
+
+// 获取状态文字
+export function getStatusText(status: OrderStatus | TaskStatus): string {
+  const map: Record<string, string> = {
+    pending: '待处理',
+    script: '生成文案中',
+    clip: '生成剪辑中',
+    video: '合成视频中',
+    running: '执行中',
+    wait_confirm: '待确认',
+    done: '已完成',
+    error: '失败'
+  };
+  return map[status] || status;
+}
+
+// 获取状态颜色
+export function getStatusColor(status: OrderStatus | TaskStatus): string {
+  const map: Record<string, string> = {
+    pending: '#999',
+    script: '#1890ff',
+    clip: '#52c41a',
+    video: '#722ed1',
+    running: '#1890ff',
+    wait_confirm: '#fa8c16',
+    done: '#52c41a',
+    error: '#ff4d4f'
+  };
+  return map[status] || '#999';
+}
