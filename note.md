@@ -111,7 +111,19 @@
 - **UI库**: Ant Design
 - **HTTP**: Axios
 - **数据持久化**: localStorage
-- **API代理**: Vite proxy → coze.site
+- **API代理**: 开发环境 Vite proxy / 生产环境 Nginx reverse proxy → coze.site
+- **部署**: Fly.io（Docker + Nginx）
+
+### 部署
+- **平台**: Fly.io（Docker 容器）
+- **架构**: 多阶段构建（Node 编译 → Nginx 运行）
+- **配置文件**:
+  - `Dockerfile` - 两阶段构建镜像
+  - `nginx.conf` - Nginx 配置（8 条 API 反向代理 + SPA fallback）
+  - `fly.toml` - Fly.io 应用配置（区域: hkg，端口: 8080）
+  - `.dockerignore` - 构建排除项
+- **部署命令**: `flyctl deploy`
+- **重新部署**: 修改代码后执行 `flyctl deploy` 即可
 
 ### 关键文件
 - `src/index.tsx` - 主应用组件（页面路由、状态管理、工作流引擎）

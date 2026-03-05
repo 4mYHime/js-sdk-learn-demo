@@ -248,6 +248,12 @@ function LoadApp() {
         
         if (scriptTask?.status === 'done' && !clipTask) {
           // script完成，clip未创建 → 创建clip
+          if (!scriptTask.orderNum) {
+            console.error('script任务缺少orderNum，无法创建clip');
+            updateOrderStatus(orderId, 'error', '文案任务缺少订单号(orderNum)，请重新创建订单');
+            setCurrentOrder(getOrder(orderId));
+            break;
+          }
           console.log('创建剪辑任务，订单号:', scriptTask.orderNum);
           updateOrderStatus(orderId, 'clip');
           setCurrentOrder(getOrder(orderId));
@@ -277,6 +283,12 @@ function LoadApp() {
           
         } else if (clipTask?.status === 'done' && !videoTask) {
           // clip完成，video未创建 → 创建video
+          if (!clipTask.orderNum) {
+            console.error('clip任务缺少orderNum，无法创建video');
+            updateOrderStatus(orderId, 'error', '剪辑任务缺少订单号(orderNum)，请重新创建订单');
+            setCurrentOrder(getOrder(orderId));
+            break;
+          }
           console.log('创建视频任务，订单号:', clipTask.orderNum);
           updateOrderStatus(orderId, 'video');
           setCurrentOrder(getOrder(orderId));
@@ -334,6 +346,53 @@ function LoadApp() {
     pollingRef.current = false;
   }, []);
   
+  // 订单列表页：复用 resumeOrderWorkflow 处理活跃订单（完整工作流推进）
+  useEffect(() => {
+    if (page === 'orders' && appKey) {
+      let cancelled = false;
+
+      const processNextActiveOrder = async () => {
+        while (!cancelled) {
+          const allOrders = getUserOrders(appKey);
+          const activeOrder = allOrders.find(o =>
+            o.status !== 'done' && o.status !== 'error' &&
+            !o.tasks.some(t => t.status === 'wait_confirm')
+          );
+
+          if (!activeOrder) {
+            console.log('[列表页] 无活跃订单需要处理');
+            break;
+          }
+
+          console.log('[列表页] 开始处理订单:', activeOrder.movieName, activeOrder.id);
+          await resumeOrderWorkflow(activeOrder.id);
+          if (!cancelled) {
+            setOrders(getUserOrders(appKey));
+          }
+        }
+      };
+
+      processNextActiveOrder();
+
+      // 定时从 localStorage 刷新列表（resumeOrderWorkflow 写 localStorage，这里读取刷新 UI）
+      const refreshTimer = setInterval(() => {
+        if (!cancelled) {
+          setOrders(getUserOrders(appKey));
+          // 如果当前无工作流在运行，尝试处理下一个活跃订单
+          if (!pollingRef.current) {
+            processNextActiveOrder();
+          }
+        }
+      }, 10000);
+
+      return () => {
+        cancelled = true;
+        clearInterval(refreshTimer);
+        stopWorkflow();
+      };
+    }
+  }, [page, appKey]);
+
   // 进入订单详情页时，检查并恢复轮询
   useEffect(() => {
     if (page === 'detail' && currentOrder) {
