@@ -49,6 +49,16 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/status/, ''),
       },
+      '/api/cloud_files': {
+        target: 'https://m83sqwjvdv.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/cloud_files/, ''),
+      },
+      '/api/viral_learn': {
+        target: 'https://s6zrzf9gxs.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/viral_learn/, ''),
+      },
     },
   }
 })

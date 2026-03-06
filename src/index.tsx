@@ -1,16 +1,16 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Steps, Button, Card, List, Avatar, Alert, Select, Input, Spin, Result, Tag, Empty, Radio } from 'antd';
-import { IMovie, INarratorTemplate, IBGM, IDubbing, IEpisodeData } from './types';
+import { IMovie, INarratorTemplate, IBGM, IDubbing, IEpisodeData, ICloudFile } from './types';
 import { fetchMovies } from './api/movies';
 import { fetchTemplates } from './api/templates';
 import { fetchBGMList } from './api/bgm';
 import { fetchDubbingList } from './api/dubbing';
-import { generateScript, generateClip, synthesizeVideo, pollTaskUntilComplete } from './api/tasks';
+import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, pollTaskUntilComplete } from './api/tasks';
 import {
   IOrder, ITask, OrderStatus, DeliveryMode,
   getCurrentUser, setCurrentUser, logout,
-  getUserOrders, getOrder, createOrder,
+  getUserOrders, getOrder, createOrder, saveOrder,
   updateOrderStatus, updateOrderTask, setOrderVideoUrl,
   formatTime, formatDuration, getStatusText, getStatusColor
 } from './store';
@@ -48,6 +48,16 @@ function LoadApp() {
   const [templates, setTemplates] = useState<INarratorTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<INarratorTemplate | null>(null);
+  
+  // Step 2 (自定义电影): 云盘文件 + 爆款模型配置
+  const [cloudFiles, setCloudFiles] = useState<ICloudFile[]>([]);
+  const [cloudFilesLoading, setCloudFilesLoading] = useState(false);
+  const [cloudFilesPage, setCloudFilesPage] = useState(1);
+  const [cloudFilesTotalPages, setCloudFilesTotalPages] = useState(1);
+  const [selectedSrtFile, setSelectedSrtFile] = useState<ICloudFile | null>(null);
+  const [selectedVideoFile, setSelectedVideoFile] = useState<ICloudFile | null>(null);
+  const [narratorType, setNarratorType] = useState('电影');
+  const [modelVersion, setModelVersion] = useState('advanced');
   
   // Step 3: BGM和配音数据
   const [bgmList, setBgmList] = useState<IBGM[]>([]);
@@ -90,6 +100,21 @@ function LoadApp() {
       setTemplatesLoading(false);
     }
   }, []);
+  
+  // 加载云盘文件列表
+  const loadCloudFiles = useCallback(async (page: number = 1) => {
+    setCloudFilesLoading(true);
+    try {
+      const res = await fetchCloudFiles(appKey, page, 20);
+      setCloudFiles(res.api_response.data.items);
+      setCloudFilesTotalPages(res.api_response.data.total_pages);
+      setCloudFilesPage(res.api_response.data.page);
+    } catch (error) {
+      console.error('加载云盘文件失败:', error);
+    } finally {
+      setCloudFilesLoading(false);
+    }
+  }, [appKey]);
   
   // 加载BGM和配音
   const loadConfig = useCallback(async () => {
@@ -242,11 +267,64 @@ function LoadApp() {
         }
         
         // 2. 无running任务 → 根据已完成任务推断并创建下一步
+        const viralLearnTask = order.tasks.find(t => t.type === 'viral_learn');
         const scriptTask = order.tasks.find(t => t.type === 'script');
         const clipTask = order.tasks.find(t => t.type === 'clip');
         const videoTask = order.tasks.find(t => t.type === 'video');
         
-        if (scriptTask?.status === 'done' && !clipTask) {
+        if (viralLearnTask?.status === 'done' && !scriptTask) {
+          // viral_learn完成，script未创建 → 提取learning_model_id，创建script
+          const learningModelId = viralLearnTask.result?.api_response?.data?.results?.order_info?.learning_model_id || '';
+          if (!learningModelId) {
+            console.error('viral_learn任务未返回learning_model_id');
+            updateOrderStatus(orderId, 'error', '爆款模型任务未返回模型ID，请重新创建订单');
+            setCurrentOrder(getOrder(orderId));
+            break;
+          }
+          
+          // 存储learning_model_id到订单
+          const latestOrder = getOrder(orderId);
+          if (latestOrder) {
+            latestOrder.learningModelId = learningModelId;
+            latestOrder.templateId = learningModelId;
+            saveOrder(latestOrder);
+          }
+          
+          console.log('创建文案任务，模型ID:', learningModelId);
+          updateOrderStatus(orderId, 'script');
+          setCurrentOrder(getOrder(orderId));
+          
+          const episodesData: IEpisodeData[] = [{
+            num: 1,
+            srt_oss_key: order.videoSrtPath,
+            video_oss_key: order.videoPath || order.videoSrtPath,
+            negative_oss_key: order.videoPath || order.videoSrtPath
+          }];
+          
+          const scriptResponse = await generateScript({
+            app_key: order.appKey,
+            learning_model_id: learningModelId,
+            episodes_data: episodesData,
+            playlet_name: order.movieName === '自定义' ? '自定义解说' : order.movieName,
+            playlet_num: '1',
+            target_platform: order.targetPlatform,
+            task_count: 1,
+            target_character_name: '主角',
+            refine_srt_gaps: "0",
+            vendor_requirements: `投放在${order.targetPlatform}，吸引18-35岁的年轻用户观看。`,
+            story_info: ''
+          });
+          
+          const newScriptTask: ITask = {
+            type: 'script', taskId: scriptResponse.task_id, orderNum: '',
+            status: 'running', pollCount: 0, elapsedTime: 0,
+            result: null, errorMessage: '', createdAt: Date.now(), completedAt: null
+          };
+          updateOrderTask(orderId, newScriptTask);
+          setCurrentOrder(getOrder(orderId));
+          continue;
+          
+        } else if (scriptTask?.status === 'done' && !clipTask) {
           // script完成，clip未创建 → 创建clip
           if (!scriptTask.orderNum) {
             console.error('script任务缺少orderNum，无法创建clip');
@@ -432,6 +510,10 @@ function LoadApp() {
     setSelectedTemplate(null);
     setSelectedBGM(null);
     setSelectedDubbing(null);
+    setSelectedSrtFile(null);
+    setSelectedVideoFile(null);
+    setNarratorType('电影');
+    setModelVersion('advanced');
     setTaskPhase('idle');
     setPage('create');
     loadMovies();
@@ -444,20 +526,35 @@ function LoadApp() {
     }
   }, [page, movies.length, loadMovies]);
   
+  // 是否为自定义电影
+  const isCustomMovie = selectedMovie?.name === '自定义';
+  
   // 步骤变化时加载数据
   useEffect(() => {
-    if (currentStep === 1 && templates.length === 0) {
-      loadTemplates();
+    if (currentStep === 1) {
+      if (isCustomMovie) {
+        if (cloudFiles.length === 0) loadCloudFiles();
+      } else {
+        if (templates.length === 0) loadTemplates();
+      }
     }
     if (currentStep === 2 && bgmList.length === 0) {
       loadConfig();
     }
-  }, [currentStep, templates.length, bgmList.length, loadTemplates, loadConfig]);
+  }, [currentStep, isCustomMovie, templates.length, cloudFiles.length, bgmList.length, loadTemplates, loadCloudFiles, loadConfig]);
   
   // 执行完整任务流程：创建订单+第一个任务，然后跳转到详情页由resumeOrderWorkflow接管
   const executeWorkflow = async () => {
-    if (!selectedMovie || !selectedTemplate || !selectedBGM || !selectedDubbing) {
+    if (!selectedMovie || !selectedBGM || !selectedDubbing) {
       setErrorMessage('请完成所有配置');
+      return;
+    }
+    if (!isCustomMovie && !selectedTemplate) {
+      setErrorMessage('请选择解说模板');
+      return;
+    }
+    if (isCustomMovie && !selectedSrtFile) {
+      setErrorMessage('请选择视频SRT文件');
       return;
     }
     
@@ -471,56 +568,87 @@ function LoadApp() {
         appKey: appKey,
         movieId: selectedMovie.id,
         movieName: selectedMovie.name,
-        templateId: selectedTemplate.learning_model_id,
-        templateName: selectedTemplate.name,
+        templateId: isCustomMovie ? '' : selectedTemplate!.learning_model_id,
+        templateName: isCustomMovie ? '自动生成' : selectedTemplate!.name,
         bgmId: selectedBGM.bgm_file_id,
         bgmName: selectedBGM.name,
         dubbingId: selectedDubbing.dubbing_id,
         dubbingName: selectedDubbing.name,
         targetPlatform: targetPlatform,
-        deliveryMode: deliveryMode
+        deliveryMode: deliveryMode,
+        templateSource: isCustomMovie ? 'generate' : 'existing',
+        videoPath: selectedVideoFile?.file_id || '',
+        videoSrtPath: selectedSrtFile?.file_id || '',
+        narratorType: narratorType,
+        modelVersion: modelVersion
       });
       
-      // 更新订单状态
-      updateOrderStatus(order.id, 'script');
-      
-      // 构建剧集数据
-      const episodesData: IEpisodeData[] = [{
-        num: 1,
-        srt_oss_key: selectedMovie.srt_file_id,
-        video_oss_key: selectedMovie.video_file_id,
-        negative_oss_key: selectedMovie.video_file_id
-      }];
-      
-      // 创建文案任务
-      const scriptResponse = await generateScript({
-        app_key: appKey,
-        learning_model_id: selectedTemplate.learning_model_id,
-        episodes_data: episodesData,
-        playlet_name: selectedMovie.name,
-        playlet_num: '1',
-        target_platform: targetPlatform,
-        task_count: 1,
-        target_character_name: targetCharacterName || selectedMovie.character_name || '主角',
-        refine_srt_gaps: "0",
-        vendor_requirements: vendorRequirements || `投放在${targetPlatform}，吸引18-35岁的年轻用户观看。`,
-        story_info: selectedMovie.story_info || ''
-      });
-      
-      // 记录文案任务
-      const scriptTask: ITask = {
-        type: 'script',
-        taskId: scriptResponse.task_id,
-        orderNum: '',
-        status: 'running',
-        pollCount: 0,
-        elapsedTime: 0,
-        result: null,
-        errorMessage: '',
-        createdAt: Date.now(),
-        completedAt: null
-      };
-      updateOrderTask(order.id, scriptTask);
+      if (isCustomMovie) {
+        // 自定义电影：先创建爆款模型任务
+        updateOrderStatus(order.id, 'viral_learn');
+        setTaskMessage('正在创建爆款模型任务...');
+        
+        const viralResponse = await generateViralModel({
+          app_key: appKey,
+          video_path: selectedVideoFile?.file_id || '',
+          video_srt_path: selectedSrtFile!.file_id,
+          narrator_type: narratorType,
+          model_version: modelVersion
+        });
+        
+        const viralTask: ITask = {
+          type: 'viral_learn',
+          taskId: viralResponse.task_id,
+          orderNum: '',
+          status: 'running',
+          pollCount: 0,
+          elapsedTime: 0,
+          result: null,
+          errorMessage: '',
+          createdAt: Date.now(),
+          completedAt: null
+        };
+        updateOrderTask(order.id, viralTask);
+      } else {
+        // 普通电影：直接创建文案任务
+        updateOrderStatus(order.id, 'script');
+        setTaskMessage('正在创建文案任务...');
+        
+        const episodesData: IEpisodeData[] = [{
+          num: 1,
+          srt_oss_key: selectedMovie.srt_file_id,
+          video_oss_key: selectedMovie.video_file_id,
+          negative_oss_key: selectedMovie.video_file_id
+        }];
+        
+        const scriptResponse = await generateScript({
+          app_key: appKey,
+          learning_model_id: selectedTemplate!.learning_model_id,
+          episodes_data: episodesData,
+          playlet_name: selectedMovie.name,
+          playlet_num: '1',
+          target_platform: targetPlatform,
+          task_count: 1,
+          target_character_name: targetCharacterName || selectedMovie.character_name || '主角',
+          refine_srt_gaps: "0",
+          vendor_requirements: vendorRequirements || `投放在${targetPlatform}，吸引18-35岁的年轻用户观看。`,
+          story_info: selectedMovie.story_info || ''
+        });
+        
+        const scriptTask: ITask = {
+          type: 'script',
+          taskId: scriptResponse.task_id,
+          orderNum: '',
+          status: 'running',
+          pollCount: 0,
+          elapsedTime: 0,
+          result: null,
+          errorMessage: '',
+          createdAt: Date.now(),
+          completedAt: null
+        };
+        updateOrderTask(order.id, scriptTask);
+      }
       
       // 跳转到订单详情页，由resumeOrderWorkflow接管后续流程
       setCurrentOrder(getOrder(order.id));
@@ -547,6 +675,10 @@ function LoadApp() {
     setSelectedTemplate(null);
     setSelectedBGM(null);
     setSelectedDubbing(null);
+    setSelectedSrtFile(null);
+    setSelectedVideoFile(null);
+    setNarratorType('电影');
+    setModelVersion('advanced');
     setTaskPhase('idle');
     setTaskMessage('');
     setErrorMessage('');
@@ -601,6 +733,119 @@ function LoadApp() {
         );
         
       case 1:
+        if (isCustomMovie) {
+          // 自定义电影：云盘选文件 + 爆款模型配置
+          return (
+            <div>
+              <h3 style={{ marginBottom: 16 }}>配置爆款模型</h3>
+              
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontWeight: 'bold', display: 'block', marginBottom: 8 }}>解说类型</label>
+                <Select style={{ width: '100%' }} value={narratorType} onChange={setNarratorType}
+                  options={[
+                    { label: '电影', value: '电影' },
+                    { label: '短剧', value: '短剧' },
+                    { label: '第一人称电影', value: '第一人称电影' },
+                    { label: '多语种电影', value: '多语种电影' },
+                    { label: '第一人称多语种', value: '第一人称多语种' }
+                  ]}
+                />
+              </div>
+              
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontWeight: 'bold', display: 'block', marginBottom: 8 }}>模型版本</label>
+                <Select style={{ width: '100%' }} value={modelVersion} onChange={setModelVersion}
+                  options={[
+                    { label: '高级版 (advanced)', value: 'advanced' },
+                    { label: '标准版 (standard)', value: 'standard' },
+                    { label: '结构严格版 (strict)', value: 'strict' }
+                  ]}
+                />
+              </div>
+              
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontWeight: 'bold', display: 'block', marginBottom: 8 }}>
+                  视频SRT文件 <span style={{ color: '#ff4d4f' }}>*必需</span>
+                </label>
+                {selectedSrtFile && (
+                  <Tag color="blue" closable onClose={() => setSelectedSrtFile(null)} style={{ marginBottom: 8 }}>
+                    {selectedSrtFile.file_name}
+                  </Tag>
+                )}
+              </div>
+              
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontWeight: 'bold', display: 'block', marginBottom: 8 }}>
+                  视频文件 <span style={{ color: '#999' }}>可选</span>
+                </label>
+                {selectedVideoFile && (
+                  <Tag color="green" closable onClose={() => setSelectedVideoFile(null)} style={{ marginBottom: 8 }}>
+                    {selectedVideoFile.file_name}
+                  </Tag>
+                )}
+              </div>
+              
+              <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <label style={{ fontWeight: 'bold' }}>从云盘选择文件</label>
+                <Button size="small" onClick={() => loadCloudFiles(cloudFilesPage)} loading={cloudFilesLoading}>刷新</Button>
+              </div>
+              
+              {cloudFilesLoading ? (
+                <Spin tip="加载文件列表..." />
+              ) : (
+                <>
+                  <List
+                    size="small"
+                    dataSource={cloudFiles}
+                    renderItem={(file) => {
+                      const isSrt = ['.srt', '.txt'].includes(file.suffix.startsWith('.') ? file.suffix : `.${file.suffix}`);
+                      const isMp4 = file.suffix === '.mp4' || file.suffix === 'mp4';
+                      const isSelectedAsSrt = selectedSrtFile?.file_id === file.file_id;
+                      const isSelectedAsVideo = selectedVideoFile?.file_id === file.file_id;
+                      return (
+                        <Card size="small" style={{ marginBottom: 4, background: (isSelectedAsSrt || isSelectedAsVideo) ? '#e6f7ff' : '#fff' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {file.file_name}
+                              </div>
+                              <div style={{ fontSize: 10, color: '#999' }}>
+                                {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
+                              {isSrt && (
+                                <Button size="small" type={isSelectedAsSrt ? 'primary' : 'default'}
+                                  onClick={() => setSelectedSrtFile(isSelectedAsSrt ? null : file)}>
+                                  {isSelectedAsSrt ? '已选为SRT' : '选为SRT'}
+                                </Button>
+                              )}
+                              {isMp4 && (
+                                <Button size="small" type={isSelectedAsVideo ? 'primary' : 'default'}
+                                  onClick={() => setSelectedVideoFile(isSelectedAsVideo ? null : file)}>
+                                  {isSelectedAsVideo ? '已选为视频' : '选为视频'}
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </Card>
+                      );
+                    }}
+                  />
+                  {cloudFilesTotalPages > 1 && (
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
+                      <Button size="small" disabled={cloudFilesPage <= 1} onClick={() => loadCloudFiles(cloudFilesPage - 1)}>上一页</Button>
+                      <span style={{ fontSize: 12, lineHeight: '24px' }}>{cloudFilesPage}/{cloudFilesTotalPages}</span>
+                      <Button size="small" disabled={cloudFilesPage >= cloudFilesTotalPages} onClick={() => loadCloudFiles(cloudFilesPage + 1)}>下一页</Button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        }
+        
+        // 普通电影：选择模板
         return (
           <div>
             <h3 style={{ marginBottom: 16 }}>选择解说模板</h3>
@@ -734,10 +979,22 @@ function LoadApp() {
                   description={
                     <div style={{ fontSize: 12 }}>
                       <p><strong>电影:</strong> {selectedMovie?.name}</p>
-                      <p style={{ color: '#999', fontSize: 10 }}>视频ID: {selectedMovie?.video_file_id?.slice(0, 20)}...</p>
-                      <p style={{ color: '#999', fontSize: 10 }}>字幕ID: {selectedMovie?.srt_file_id?.slice(0, 20)}...</p>
-                      <p><strong>模板:</strong> {selectedTemplate?.name}</p>
-                      <p style={{ color: '#999', fontSize: 10 }}>模型ID: {selectedTemplate?.learning_model_id}</p>
+                      {isCustomMovie ? (
+                        <>
+                          <p><strong>SRT文件:</strong> {selectedSrtFile?.file_name}</p>
+                          {selectedVideoFile && <p><strong>视频文件:</strong> {selectedVideoFile.file_name}</p>}
+                          <p><strong>解说类型:</strong> {narratorType}</p>
+                          <p><strong>模型版本:</strong> {modelVersion}</p>
+                          <p style={{ color: '#eb2f96', fontSize: 10 }}>将先生成爆款模型，再自动创建文案</p>
+                        </>
+                      ) : (
+                        <>
+                          <p style={{ color: '#999', fontSize: 10 }}>视频ID: {selectedMovie?.video_file_id?.slice(0, 20)}...</p>
+                          <p style={{ color: '#999', fontSize: 10 }}>字幕ID: {selectedMovie?.srt_file_id?.slice(0, 20)}...</p>
+                          <p><strong>模板:</strong> {selectedTemplate?.name}</p>
+                          <p style={{ color: '#999', fontSize: 10 }}>模型ID: {selectedTemplate?.learning_model_id}</p>
+                        </>
+                      )}
                       <p><strong>BGM:</strong> {selectedBGM?.name}</p>
                       <p><strong>配音:</strong> {selectedDubbing?.name}</p>
                       <p><strong>平台:</strong> {targetPlatform}</p>
@@ -804,7 +1061,7 @@ function LoadApp() {
   const canGoNext = () => {
     switch (currentStep) {
       case 0: return !!selectedMovie;
-      case 1: return !!selectedTemplate;
+      case 1: return isCustomMovie ? !!selectedSrtFile : !!selectedTemplate;
       case 2: return !!selectedBGM && !!selectedDubbing;
       default: return false;
     }
@@ -882,6 +1139,7 @@ function LoadApp() {
     
     const getTaskIcon = (type: string) => {
       switch (type) {
+        case 'viral_learn': return '🧠';
         case 'script': return '📝';
         case 'clip': return '✂️';
         case 'video': return '🎬';
@@ -891,6 +1149,7 @@ function LoadApp() {
     
     const getTaskName = (type: string) => {
       switch (type) {
+        case 'viral_learn': return '生成爆款模型';
         case 'script': return '生成解说文案';
         case 'clip': return '生成剪辑脚本';
         case 'video': return '合成视频';
@@ -910,7 +1169,8 @@ function LoadApp() {
             <Tag color={getStatusColor(currentOrder.status)}>{getStatusText(currentOrder.status)}</Tag>
           </div>
           <div style={{ fontSize: 12, color: '#666' }}>
-            <div>模板: {currentOrder.templateName}</div>
+            <div>模板: {currentOrder.templateName}{currentOrder.templateSource === 'generate' ? ' (自动生成)' : ''}</div>
+            {currentOrder.learningModelId && <div style={{ fontSize: 10, color: '#999' }}>模型ID: {currentOrder.learningModelId}</div>}
             <div>BGM: {currentOrder.bgmName} | 配音: {currentOrder.dubbingName}</div>
             <div>平台: {currentOrder.targetPlatform} | 交付: {currentOrder.deliveryMode === 'staged' ? '分段式' : '一站式'}</div>
             <div>创建时间: {formatTime(currentOrder.createdAt)}</div>
@@ -1003,7 +1263,7 @@ function LoadApp() {
         style={{ marginBottom: 24 }}
         items={[
           { title: '选择电影' },
-          { title: '选择模板' },
+          { title: isCustomMovie ? '爆款模型' : '选择模板' },
           { title: '配置' },
           { title: '执行' }
         ]}

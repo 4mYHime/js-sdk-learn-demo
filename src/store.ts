@@ -1,10 +1,10 @@
 // 订单和任务数据存储模块
 
 // 子任务类型
-export type TaskType = 'script' | 'clip' | 'video';
+export type TaskType = 'viral_learn' | 'script' | 'clip' | 'video';
 export type TaskStatus = 'pending' | 'running' | 'done' | 'error' | 'wait_confirm';
 export type DeliveryMode = 'oneStop' | 'staged';
-export type OrderStatus = 'pending' | 'script' | 'clip' | 'video' | 'done' | 'error';
+export type OrderStatus = 'pending' | 'viral_learn' | 'script' | 'clip' | 'video' | 'done' | 'error';
 
 // 子任务
 export interface ITask {
@@ -34,6 +34,12 @@ export interface IOrder {
   dubbingName: string;
   targetPlatform: string;
   deliveryMode: DeliveryMode;
+  templateSource: 'existing' | 'generate';
+  videoPath: string;
+  videoSrtPath: string;
+  narratorType: string;
+  modelVersion: string;
+  learningModelId: string;
   status: OrderStatus;
   createdAt: number;
   updatedAt: number;
@@ -152,6 +158,11 @@ export function createOrder(params: {
   dubbingName: string;
   targetPlatform: string;
   deliveryMode: DeliveryMode;
+  templateSource?: 'existing' | 'generate';
+  videoPath?: string;
+  videoSrtPath?: string;
+  narratorType?: string;
+  modelVersion?: string;
 }): IOrder {
   const order: IOrder = {
     id: generateOrderId(),
@@ -166,6 +177,12 @@ export function createOrder(params: {
     dubbingName: params.dubbingName,
     targetPlatform: params.targetPlatform,
     deliveryMode: params.deliveryMode,
+    templateSource: params.templateSource || 'existing',
+    videoPath: params.videoPath || '',
+    videoSrtPath: params.videoSrtPath || '',
+    narratorType: params.narratorType || '',
+    modelVersion: params.modelVersion || '',
+    learningModelId: '',
     status: 'pending',
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -206,6 +223,7 @@ export function formatDuration(seconds: number): string {
 export function getStatusText(status: OrderStatus | TaskStatus): string {
   const map: Record<string, string> = {
     pending: '待处理',
+    viral_learn: '生成爆款模型中',
     script: '生成文案中',
     clip: '生成剪辑中',
     video: '合成视频中',
@@ -221,6 +239,7 @@ export function getStatusText(status: OrderStatus | TaskStatus): string {
 export function getStatusColor(status: OrderStatus | TaskStatus): string {
   const map: Record<string, string> = {
     pending: '#999',
+    viral_learn: '#eb2f96',
     script: '#1890ff',
     clip: '#52c41a',
     video: '#722ed1',

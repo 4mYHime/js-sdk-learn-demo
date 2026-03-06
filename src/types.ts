@@ -117,6 +117,43 @@ export interface ISynthesizeVideoRequest {
   app_key: string;
 }
 
+// 云盘文件
+export interface ICloudFile {
+  file_id: string;
+  file_name: string;
+  file_size: number;
+  suffix: string;
+  category: number;
+  completed_time: string;
+  created_at: string;
+  srt_line: number | null;
+}
+
+// 云盘文件列表响应
+export interface ICloudFilesResponse {
+  api_response: {
+    code: number;
+    message: string;
+    data: {
+      total: number;
+      page: number;
+      page_size: number;
+      total_pages: number;
+      items: ICloudFile[];
+    };
+  };
+  run_id: string;
+}
+
+// 生成爆款模型请求
+export interface IGenerateViralModelRequest {
+  app_key: string;
+  video_path?: string;
+  video_srt_path: string;
+  narrator_type: string;
+  model_version: string;
+}
+
 // 任务响应
 export interface ITaskResponse {
   task_id: string;

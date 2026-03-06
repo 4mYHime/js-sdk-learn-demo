@@ -5,7 +5,8 @@
 2. **订单列表页** - 显示当前用户所有订单（按创建时间排序），支持创建新订单
 3. **创建订单页** - 4步向导：
     - Step 1: 选择爆款电影（API获取电影列表，选中后获得 video_file_id、srt_file_id）
-    - Step 2: 选择解说模板（API获取模板列表，自动过滤掉 `learning_model_id=="else"` 的自定义模板，选中后获得 learning_model_id）
+    - Step 2 (普通电影): 选择解说模板（API获取模板列表，选中后获得 learning_model_id）
+    - Step 2 (自定义电影): 配置爆款模型（从云盘选SRT文件/视频文件 + 解说类型 + 模型版本）
     - Step 3: 配置参数
         - 目标平台（抖音/快手/YouTube/TikTok）
         - 主角名称（可选）
@@ -48,8 +49,12 @@
 
 1. 材料上传（配置了爆款电影则可以跳过这步）
     - 目的是拿到文件id file_id，比如视频文件id、字幕文件id等
-2. 学习爆款（配置了解说模板则可以跳过这步）
-    - 目的是拿到学习模型id learning_model_id，如 narrator-20250924170024-uzgpov6
+2. 生成爆款模型（已实现，选择“自定义”电影时触发，选了现有模板则跳过）
+    - 目的是拿到学习模型id learning_model_id，如 narrator-20260305202540-ZyxROW
+    - 入参: app_key, video_srt_path(必需), video_path(可选), narrator_type(必需), model_version(必需)
+    - 出参: task_id → 轮询完成后从 `results.order_info.learning_model_id` 提取模型ID
+    - narrator_type 可选值: 电影/短剧/第一人称电影/多语种电影/第一人称多语种
+    - model_version 可选值: advanced(高级版)/standard(标准版)/strict(结构严格版)
 3. 生成解说文案（已实现）
     - 入参: app_key, learning_model_id, episodes_data(video_file_id, srt_file_id), playlet_name 等
     - 出参: task_id → 轮询完成后获得 task_order_num（如 `generate_writing_xxx`）
@@ -66,6 +71,8 @@
 
 ## 任务链式衔接逻辑
 ```
+[自定义电影] 生成爆款模型 → learning_model_id → 作为生成文案的 learning_model_id
+                                                    ↓
 生成文案 → task_order_num → 作为剪辑脚本的 order_num
                               ↓
                         剪辑脚本 → task_order_num → 作为合成视频的 order_num
@@ -88,9 +95,9 @@
 ## 订单持久化（localStorage）
 - 订单数据存储在 `localStorage`，key: `narration_orders`
 - 用户登录信息存储在 `localStorage`，key: `narration_user`
-- 订单结构 `IOrder`: id, appKey, movieId/Name, templateId/Name, bgmId/Name, dubbingId/Name, targetPlatform, **deliveryMode**(oneStop/staged), status, tasks[], videoUrl, errorMessage
-- 任务结构 `ITask`: type(script/clip/video), taskId, orderNum, status, pollCount, elapsedTime, result, createdAt, completedAt
-- 订单状态: pending → script → clip → video → done / error
+- 订单结构 `IOrder`: id, appKey, movieId/Name, templateId/Name, bgmId/Name, dubbingId/Name, targetPlatform, **deliveryMode**(oneStop/staged), **templateSource**(existing/generate), videoPath, videoSrtPath, narratorType, modelVersion, **learningModelId**, status, tasks[], videoUrl, errorMessage
+- 任务结构 `ITask`: type(viral_learn/script/clip/video), taskId, orderNum, status, pollCount, elapsedTime, result, createdAt, completedAt
+- 订单状态: pending → [viral_learn →] script → clip → video → done / error
 - 任务状态: pending | running | **wait_confirm** | done | error
 
 ## 工作流恢复机制
@@ -101,6 +108,9 @@
   1. 有 running 任务 → 继续轮询
   2. 轮询完成后，分段式且为 script/clip → 设为 wait_confirm 并暂停
   3. 无 running 任务但有已完成的前置任务 → 自动创建下一步任务
+     - viral_learn done → 提取 learning_model_id → 创建 script
+     - script done → 创建 clip
+     - clip done → 创建 video
   4. 所有任务完成 → 提取 videoUrl，标记订单完成
 - 用户点击“确认并继续下一步”按钮 → `confirmTask` 将 wait_confirm 改为 done，再调 resumeOrderWorkflow
 - 页面离开时通过 `abortRef` 中断轮询，返回后可重新恢复
@@ -119,7 +129,7 @@
 - **架构**: 多阶段构建（Node 编译 → Nginx 运行）
 - **配置文件**:
   - `Dockerfile` - 两阶段构建镜像
-  - `nginx.conf` - Nginx 配置（8 条 API 反向代理 + SPA fallback）
+  - `nginx.conf` - Nginx 配置（10 条 API 反向代理 + SPA fallback）
   - `fly.toml` - Fly.io 应用配置（区域: hkg，端口: 8080）
   - `.dockerignore` - 构建排除项
 - **部署命令**: `flyctl deploy`
