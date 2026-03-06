@@ -26,3 +26,19 @@
 - `vite.config.js` — 开发代理
 - `nginx.conf` — 生产代理
 - `note.md` — 文档
+
+---
+
+## Bug Fix: 重复创建 script 任务 (2026-03-06)
+
+**问题**: 创建自定义视频订单后返回列表页，viral_learn 完成时 API 创建了 3 个相同的 script 任务
+
+**根因**: 竞态条件
+1. 被中断的旧工作流 `finally` 块重置 `pollingRef.current = false`，导致新工作流锁被意外释放
+2. `!scriptTask` 检查与 `updateOrderTask` 写入之间有 `await generateScript()` 网络延迟窗口
+
+**修复**:
+- [✅] `finally` 块仅在 `!signal.aborted` 时重置 `pollingRef`
+- [✅] 调用 API 前先写入 `pending` 占位任务
+
+**验证**: 测试通过

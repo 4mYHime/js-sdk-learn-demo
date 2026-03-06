@@ -292,6 +292,14 @@ function LoadApp() {
           
           console.log('创建文案任务，模型ID:', learningModelId);
           updateOrderStatus(orderId, 'script');
+          
+          // 【防重复】先写入 pending 占位任务，再调用 API
+          const placeholderScriptTask: ITask = {
+            type: 'script', taskId: '', orderNum: '',
+            status: 'pending', pollCount: 0, elapsedTime: 0,
+            result: null, errorMessage: '', createdAt: Date.now(), completedAt: null
+          };
+          updateOrderTask(orderId, placeholderScriptTask);
           setCurrentOrder(getOrder(orderId));
           
           const episodesData: IEpisodeData[] = [{
@@ -315,6 +323,7 @@ function LoadApp() {
             story_info: ''
           });
           
+          // API 返回后更新为 running 状态
           const newScriptTask: ITask = {
             type: 'script', taskId: scriptResponse.task_id, orderNum: '',
             status: 'running', pollCount: 0, elapsedTime: 0,
@@ -414,7 +423,10 @@ function LoadApp() {
         setCurrentOrder(getOrder(orderId));
       }
     } finally {
-      pollingRef.current = false;
+      // 只有非中断退出才重置 pollingRef，避免被中断的旧工作流覆盖新工作流的锁
+      if (!signal.aborted) {
+        pollingRef.current = false;
+      }
     }
   }, []);
   
