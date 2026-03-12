@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
-import { Steps, Button, Card, List, Avatar, Alert, Select, Input, Spin, Result, Tag, Empty, Radio, message } from 'antd';
+import { Steps, Button, Card, List, Avatar, Alert, Select, Input, Spin, Result, Tag, Empty, Radio, message, Tooltip } from 'antd';
 import { IMovie, INarratorTemplate, IBGM, IDubbing, IEpisodeData, ICloudFile } from './types';
 import { fetchMovies } from './api/movies';
 import { fetchTemplates } from './api/templates';
@@ -97,6 +97,42 @@ function LoadApp() {
   const [targetCharacterName, setTargetCharacterName] = useState('');
   const [vendorRequirements, setVendorRequirements] = useState('');
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('staged');
+  
+  // 音频试听状态
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playingAudioUrl, setPlayingAudioUrl] = useState<string | null>(null);
+  
+  // 播放/暂停试听音频
+  const toggleAudio = useCallback((url: string | null) => {
+    if (!url) return;
+    
+    if (playingAudioUrl === url) {
+      // 正在播放同一个，暂停
+      audioRef.current?.pause();
+      setPlayingAudioUrl(null);
+    } else {
+      // 播放新的
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      const audio = new Audio(url);
+      audio.onended = () => setPlayingAudioUrl(null);
+      audio.onerror = () => {
+        message.error('音频加载失败');
+        setPlayingAudioUrl(null);
+      };
+      audio.play();
+      audioRef.current = audio;
+      setPlayingAudioUrl(url);
+    }
+  }, [playingAudioUrl]);
+  
+  // 组件卸载时停止音频
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause();
+    };
+  }, []);
   
   // 任务执行状态（仅用于创建页）
   const [taskPhase, setTaskPhase] = useState<TaskPhase>('idle');
@@ -1315,29 +1351,67 @@ function LoadApp() {
                 
                 <div className="form-group">
                   <label className="form-label">选择BGM</label>
-                  <Select
-                    style={{ width: '100%' }}
-                    placeholder="选择背景音乐"
-                    value={selectedBGM?.id}
-                    onChange={(id) => {
-                      if (id === -1) {
+                  <div className={`audio-card-list ${selectedBGM?.name === '自定义' ? 'compact' : ''}`}>
+                    {/* 不使用BGM选项 */}
+                    <div 
+                      className={`audio-card ${selectedBGM?.id === -1 ? 'audio-card-selected' : ''}`}
+                      onClick={() => {
                         setSelectedBGM({ id: -1, name: 'no_bgm', bgm_file_id: 'no_bgm', status: null, remark: null, bgm_demo_url: '', type: null, tag: null, description: null } as IBGM);
                         setSelectedCustomBgmFile(null);
-                        return;
-                      }
-                      const bgm = bgmList.find(b => b.id === id) || null;
-                      setSelectedBGM(bgm);
-                      setSelectedCustomBgmFile(null);
-                      if (bgm?.name === '自定义' && customBgmFiles.length === 0) loadCustomBgmFiles();
-                    }}
-                    options={[
-                      { label: '不使用BGM (no_bgm)', value: -1 },
-                      ...bgmList.map(bgm => ({
-                        label: `${bgm.name} ${bgm.tag ? `(${bgm.tag})` : ''}`,
-                        value: bgm.id
-                      }))
-                    ]}
-                  />
+                      }}
+                    >
+                      <div className="audio-card-icon">🔇</div>
+                      <div className="audio-card-info">
+                        <div className="audio-card-name">不使用BGM</div>
+                        <div className="audio-card-desc">静音模式</div>
+                      </div>
+                      {selectedBGM?.id === -1 && <div className="audio-card-check">✓</div>}
+                    </div>
+                    
+                    {/* BGM列表 */}
+                    {bgmList.map(bgm => {
+                      const isSelected = selectedBGM?.id === bgm.id;
+                      const isPlaying = playingAudioUrl === bgm.bgm_demo_url;
+                      return (
+                        <div 
+                          key={bgm.id}
+                          className={`audio-card ${isSelected ? 'audio-card-selected' : ''}`}
+                          onClick={() => {
+                            setSelectedBGM(bgm);
+                            setSelectedCustomBgmFile(null);
+                            if (bgm.name === '自定义' && customBgmFiles.length === 0) loadCustomBgmFiles();
+                          }}
+                        >
+                          <div className="audio-card-icon">🎵</div>
+                          <div className="audio-card-info">
+                            <div className="audio-card-name">{bgm.name}</div>
+                            <div className="audio-card-desc">
+                              {bgm.tag && <Tag color="blue" style={{ fontSize: 10 }}>{bgm.tag}</Tag>}
+                              {bgm.description && (
+                                <Tooltip title={bgm.description} placement="top">
+                                  <span className="audio-card-desc-text">{bgm.description}</span>
+                                </Tooltip>
+                              )}
+                            </div>
+                          </div>
+                          {bgm.bgm_demo_url && bgm.name !== '自定义' && (
+                            <Button 
+                              size="small" 
+                              type={isPlaying ? 'primary' : 'default'}
+                              className="audio-play-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleAudio(bgm.bgm_demo_url);
+                              }}
+                            >
+                              {isPlaying ? '⏸ 暂停' : '▶ 试听'}
+                            </Button>
+                          )}
+                          {isSelected && <div className="audio-card-check">✓</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {selectedBGM?.name === '自定义' && (
@@ -1403,21 +1477,46 @@ function LoadApp() {
                 
                 <div className="form-group">
                   <label className="form-label">选择配音</label>
-                  <Select
-                    style={{ width: '100%' }}
-                    placeholder="选择配音角色"
-                    value={selectedDubbing?.id}
-                    onChange={(id) => {
-                      const dub = dubbingList.find(d => d.id === id) || null;
-                      setSelectedDubbing(dub);
-                      setSelectedCustomDubbingFile(null);
-                      if (dub?.name === '自定义' && customDubbingFiles.length === 0) loadCustomDubbingFiles();
-                    }}
-                    options={dubbingList.map(dub => ({
-                      label: `${dub.name} (${dub.role})`,
-                      value: dub.id
-                    }))}
-                  />
+                  <div className={`audio-card-list ${selectedDubbing?.name === '自定义' ? 'compact' : ''}`}>
+                    {dubbingList.map(dub => {
+                      const isSelected = selectedDubbing?.id === dub.id;
+                      const isPlaying = playingAudioUrl === dub.dubbing_demo_url;
+                      return (
+                        <div 
+                          key={dub.id}
+                          className={`audio-card ${isSelected ? 'audio-card-selected' : ''}`}
+                          onClick={() => {
+                            setSelectedDubbing(dub);
+                            setSelectedCustomDubbingFile(null);
+                            if (dub.name === '自定义' && customDubbingFiles.length === 0) loadCustomDubbingFiles();
+                          }}
+                        >
+                          <div className="audio-card-icon">🎙️</div>
+                          <div className="audio-card-info">
+                            <div className="audio-card-name">{dub.name}</div>
+                            <div className="audio-card-desc">
+                              <Tag color="purple" style={{ fontSize: 10, marginRight: 4 }}>{dub.role}</Tag>
+                              {dub.language && <Tag color="cyan" style={{ fontSize: 10 }}>{dub.language}</Tag>}
+                            </div>
+                          </div>
+                          {dub.dubbing_demo_url && dub.name !== '自定义' && (
+                            <Button 
+                              size="small" 
+                              type={isPlaying ? 'primary' : 'default'}
+                              className="audio-play-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleAudio(dub.dubbing_demo_url);
+                              }}
+                            >
+                              {isPlaying ? '⏸ 暂停' : '▶ 试听'}
+                            </Button>
+                          )}
+                          {isSelected && <div className="audio-card-check">✓</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {selectedDubbing?.name === '自定义' && (
