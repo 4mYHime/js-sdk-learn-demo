@@ -7,7 +7,11 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 3000,
-    open: true,
+    open: false,
+    hmr: {
+      host: 'localhost',
+      timeout: 3000,
+    },
     proxy: {
       '/api/movies': {
         target: 'https://rt6xvm5qvr.coze.site',
@@ -58,6 +62,11 @@ export default defineConfig({
         target: 'https://s6zrzf9gxs.coze.site',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/viral_learn/, ''),
+      },
+      '/api/v2': {
+        target: 'https://openapi.jieshuo.cn',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/v2/, '/v2'),
       },
     },
   }

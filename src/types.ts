@@ -145,6 +145,19 @@ export interface ICloudFilesResponse {
   run_id: string;
 }
 
+// 云盘文件列表直接 API 响应
+export interface ICloudFilesDirectResponse {
+  code: number;
+  message: string;
+  data: {
+    total: number;
+    page: number;
+    page_size: number;
+    total_pages: number;
+    items: ICloudFile[];
+  };
+}
+
 // 生成爆款模型请求
 export interface IGenerateViralModelRequest {
   app_key: string;

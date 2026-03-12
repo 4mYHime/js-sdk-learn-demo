@@ -26,17 +26,22 @@ export interface IOrder {
   appKey: string;
   movieId: number;
   movieName: string;
+  movieSource: 'existing' | 'custom';
   templateId: string;
   templateName: string;
+  templateSource: 'existing' | 'generate';
   bgmId: string;
   bgmName: string;
   dubbingId: string;
   dubbingName: string;
   targetPlatform: string;
+  targetCharacterName: string;
+  vendorRequirements: string;
+  storyInfo: string;
   deliveryMode: DeliveryMode;
-  templateSource: 'existing' | 'generate';
   videoPath: string;
   videoSrtPath: string;
+  viralSrtPath: string;
   narratorType: string;
   modelVersion: string;
   learningModelId: string;
@@ -150,17 +155,22 @@ export function createOrder(params: {
   appKey: string;
   movieId: number;
   movieName: string;
+  movieSource?: 'existing' | 'custom';
   templateId: string;
   templateName: string;
+  templateSource?: 'existing' | 'generate';
   bgmId: string;
   bgmName: string;
   dubbingId: string;
   dubbingName: string;
   targetPlatform: string;
+  targetCharacterName?: string;
+  vendorRequirements?: string;
+  storyInfo?: string;
   deliveryMode: DeliveryMode;
-  templateSource?: 'existing' | 'generate';
   videoPath?: string;
   videoSrtPath?: string;
+  viralSrtPath?: string;
   narratorType?: string;
   modelVersion?: string;
 }): IOrder {
@@ -169,17 +179,22 @@ export function createOrder(params: {
     appKey: params.appKey,
     movieId: params.movieId,
     movieName: params.movieName,
+    movieSource: params.movieSource || 'existing',
     templateId: params.templateId,
     templateName: params.templateName,
+    templateSource: params.templateSource || 'existing',
     bgmId: params.bgmId,
     bgmName: params.bgmName,
     dubbingId: params.dubbingId,
     dubbingName: params.dubbingName,
     targetPlatform: params.targetPlatform,
+    targetCharacterName: params.targetCharacterName || '',
+    vendorRequirements: params.vendorRequirements || '',
+    storyInfo: params.storyInfo || '',
     deliveryMode: params.deliveryMode,
-    templateSource: params.templateSource || 'existing',
     videoPath: params.videoPath || '',
     videoSrtPath: params.videoSrtPath || '',
+    viralSrtPath: params.viralSrtPath || '',
     narratorType: params.narratorType || '',
     modelVersion: params.modelVersion || '',
     learningModelId: '',

@@ -5,6 +5,7 @@ import {
   ISynthesizeVideoRequest,
   IGenerateViralModelRequest,
   ICloudFilesResponse,
+  ICloudFilesDirectResponse,
   ITaskResponse
 } from '../types';
 
@@ -103,6 +104,33 @@ export async function fetchCloudFiles(appKey: string, page: number = 1, pageSize
   return response.data;
 }
 
+// 获取云盘文件列表（直接 API）
+export async function fetchCloudFilesDirect(
+  appKey: string,
+  options: {
+    page?: number;
+    pageSize?: number;
+    orderBy?: string;
+    order?: string;
+    search?: string;
+  } = {}
+): Promise<ICloudFilesDirectResponse> {
+  const { page = 1, pageSize = 20, orderBy = '', order = 'desc', search = '' } = options;
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+    order_by: orderBy,
+    order: order,
+    search: search
+  });
+  const response = await axios.get(`/api/v2/files/list?${params.toString()}`, {
+    headers: {
+      'app-key': appKey
+    }
+  });
+  return response.data;
+}
+
 // 生成爆款学习模型
 export async function generateViralModel(request: IGenerateViralModelRequest): Promise<ITaskResponse> {
   const response = await axios.post('/api/viral_learn/run', request, {
@@ -158,14 +186,16 @@ export async function pollTaskUntilComplete(
       onProgress(status!);
     }
     
-    // status: 1=进行中, 2=已完成
-    if (status!.api_response?.data?.status === 2) {
+    // 任务状态: 0=初始化, 1=进行中, 2=已完成, 3=已失败, 4=已取消
+    const taskStatus = status!.api_response?.data?.status;
+    if (taskStatus === 2) {
       return status!;
     }
-    
-    // 检查是否失败
-    if (status!.api_response?.data?.failed_at) {
+    if (taskStatus === 3) {
       throw new Error('任务执行失败');
+    }
+    if (taskStatus === 4) {
+      throw new Error('任务已取消');
     }
     
     attempts++;
