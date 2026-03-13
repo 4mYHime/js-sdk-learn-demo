@@ -853,9 +853,10 @@ function LoadApp() {
     const srtOssKey = _isCustomMovie ? (selectedEpisodeSrtFile!.file_id) : selectedMovie.srt_file_id;
     const videoOssKey = _isCustomMovie ? (selectedEpisodeVideoFile?.file_id || selectedEpisodeSrtFile!.file_id) : selectedMovie.video_file_id;
     
+    let order: IOrder | null = null;
     try {
       // 创建订单记录
-      const order = createOrder({
+      order = createOrder({
         appKey: appKey,
         movieId: selectedMovie.id,
         movieName: _isCustomMovie ? (customMovieName.trim() || selectedEpisodeVideoFile?.file_name?.replace(/\.[^.]+$/, '') || selectedEpisodeSrtFile?.file_name?.replace(/\.[^.]+$/, '') || '自定义') : selectedMovie.name,
@@ -960,6 +961,10 @@ function LoadApp() {
       }
       console.error('创建任务错误:', error);
       setErrorMessage(errMsg);
+      // 同步更新 store 中的订单状态为 error，避免产生"幽灵订单"（无任务节点但状态卡在执行中）
+      if (order?.id) {
+        updateOrderStatus(order.id, 'error', errMsg);
+      }
     }
   };
   
