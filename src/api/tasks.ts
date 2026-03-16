@@ -6,7 +6,15 @@ import {
   IGenerateViralModelRequest,
   ICloudFilesResponse,
   ICloudFilesDirectResponse,
-  ITaskResponse
+  ITaskResponse,
+  IPreUploadRequest,
+  IPreUploadResponse,
+  IUploadTaskRequest,
+  IUploadTaskResponse,
+  ITransferListRequest,
+  ITransferListResponse,
+  IDeleteFileRequest,
+  IDeleteFileResponse
 } from '../types';
 
 // 任务状态响应类型
@@ -39,7 +47,11 @@ const TOKENS = {
   video: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIll4dTVoNlFpNGJVSHlXb3FVNHpBSWxRQmdLSkVmOFhQIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NzIwLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA2MTg3NDk1NjYyODEzMjM1Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM3NDExMzQ0NjYyNTYyIn0.S3ZV9ii3RlYtmepzYLcEl6yKtxlu1b3FcRW3Ov2fwCbAKuz48W_SCv0nLE9VDi0xiuzZPmNc8S0Ly0_kRi_YQ-G2zQszQgXwMoNRdqjvZ-Y9oWzG2r3vSwHfn1bA4rwnOjo_EkLlSTpPw7Xva8VLwCTiyCMNjR3EOqPhSTgsES0FnO5q-4piukc21U5Q6rnWPAbDirpYnmLehkdOGSX3p8VQBsdjwyv-fd5f5EvGD_4vDf-5qEJ3rtSM8mO7ENjcli9u3Astk9c6muAIgx7s6gb4ftcuGHSkY8vlTRKHyGr48OKVZbUbLnp6XpzXpvq31Jz9sYhuhZ6mvhNZzTonKQ',
   status: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjQ4NGRmNDgwLTEyOTItNGFjZS1iYzc5LTVmNjU1NDU0NmY0NyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIldvVGVJNmg2d3hDeWppMnlXdkFNTFVTa25EWTBEbE9mIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyNTMwNTY0LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjEyNTY4MzA5MTExNzE3OTM5Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjEyOTYwODAzOTM0Njk5NTU0In0.ZwdBVVxEK6stReZs75TgCwDYfOvajB-OrsFL7gNUZbdTkkPZEEA707tcCMB2T1O08ExmkRkE5cafLsU99HdZGunyjNYsqm_BCX43csA1rF3jjhznHz9aHfjMIQJBUuHchrkVajcTATBFk77ifm2OJ7hnjkiAKKPJ_UzZNhTfOnylmINsXCJoLbBX3SXIUKv4CqA1kX4SbXuEVt21u9e1vbncB4qRyIVWbJVkQt9xduvXLG2odwWlTDLhoSBGrSq_Z_Y5lOymkCWJ9wKNP0IQZr9JTXiLfTyet6FQyjQTU_pedSGUW3rIW5kGEPrnHff1Nt8mpQPboMjBicrHPGS__Q',
   cloud_files: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbInJiR2lLcEhCTTBTeWNwZlRqbHBzWGg4YzN1M1dINXM0Il0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1MzkwLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA1NjIyODMwMTc2MTQxMzU4Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM1OTk0NTkyNjU3NDU4In0.mgwZokIpTjN0RD5bgOdj_ukH8YfL3XXjokzbqqPpQOE3RgjfUICHscSQQ0ArTWHsLxckrwU31E9_e0ECL_CCD71zpLFY32wHyP3oVJs_0RCbQSsLqf0Zk0jSPbPzcV9-JAFHWbKgUIjdJLwuMDpwPd6ji1BNRBeFglYpa5Rm5CZTqsM7MKxaS0rm-dZFfutdEweoPjJKDodbqVKBoTKXH5HJxpoUVdUwlNZsyEQkGkGV8nu6Uh4-GMLSeo_CYFIp1os2Nrdzi9Kbx8Cs3KtDDPUIcDzF4W0CoI37cbd_U0FxhaTMIQEjsris0c_nW4xdn2xdXvouULiBnV-kv1hkBg',
-  viral_learn: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbImRRTlhCeHltMEFLc3ZCYTdRV3NORm1GZ2xzcXVMbm5DIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1Njc1LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA2MTg1Njc0MjgyMTA2OTMxIiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM3MjE1MDA5MjkyMzMwIn0.mM4Lw-e3_I1YDq88V8klG_pkDuJMJWHEj9gnM4ixiEwOaHlUlOvfXKIEPqkb6GGkkDm2xBgmq81vEJiIkUMlOZkAgShsYuAtWFZOGUV875jDcvPgGYozmzegampR4XzNqg841tx0FcKle6IfUbu80q9qw9-Yqy136Ct-Fk7gZHhPJUwYPLxPiWpIRbk-_NwgFsIRigOb-pkWQgry-rqOOCX6dfU_33bisT5kAHwQJyNUJtJdQjgQGyZ-VWNxGeathyw4MvQcDqAAVEYu0SfMuk5SBA5cVPnIj6FqjfL1ncs7CP215n_WkTPeDVf0Z9IsNJX4JUJ9YoZpdVUAuZdqeQ'
+  viral_learn: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbImRRTlhCeHltMEFLc3ZCYTdRV3NORm1GZ2xzcXVMbm5DIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1Njc1LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA2MTg1Njc0MjgyMTA2OTMxIiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM3MjE1MDA5MjkyMzMwIn0.mM4Lw-e3_I1YDq88V8klG_pkDuJMJWHEj9gnM4ixiEwOaHlUlOvfXKIEPqkb6GGkkDm2xBgmq81vEJiIkUMlOZkAgShsYuAtWFZOGUV875jDcvPgGYozmzegampR4XzNqg841tx0FcKle6IfUbu80q9qw9-Yqy136Ct-Fk7gZHhPJUwYPLxPiWpIRbk-_NwgFsIRigOb-pkWQgry-rqOOCX6dfU_33bisT5kAHwQJyNUJtJdQjgQGyZ-VWNxGeathyw4MvQcDqAAVEYu0SfMuk5SBA5cVPnIj6FqjfL1ncs7CP215n_WkTPeDVf0Z9IsNJX4JUJ9YoZpdVUAuZdqeQ',
+  pre_upload: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIlQ3TzNZaUUwaDF0NTM1MGc4U0ZubGo5aXBKTU9Dc2lIIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NDQyLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA1NjI1Mzc4NzUyNjkyMjcwIiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM2MjE3NTA3MzMyMTMyIn0.JNs6stiJ7gSGaPF02REVxFVY1gKO5B2RQiywC_7-6uIY7h8fKoR3s8_2hYi1G86Cy94PvPZrO6rLhlwGeA9i_3YHA5bveT59yf39BZcY-dbcS62MRoKdqrWM2X068jgUl2URo-cjr2hlzIZOKqt9HNWjGi078IIfYUR_ARS5fXOTklH92mE_Hcs4EijCc2IODKhSrhY8YFEhiyK_im6gRpJlFK2FMGvt_3j45vo3tGSw1AXbr_9nOb0JRd63gUBhwcD1XV-MF3OUycYxlK4Oy0b-xWXllif5wpKT404DVBzrC3vSxRhImw28rSw79BYNJojPKYaMkkuspxlsYVqVig',
+  upload_task: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIlpqTW9FckNKYjY4a0NnWXR4OW9kc3dJb3E4VENmbVdaIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NDY4LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA1NjM1NjAwMjU0NzYzMDM0Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM2MzI4MzM5MjU5Mzk4In0.D38xZHjFS_wQEfyJxcGQi4z4EOlwYdF8JmUBvYOfrCUb2oRLroO0GkBBYtjLKPynVrgPgCLywhuEhpKVB1xBdMEhPDUC2QHafYAf9DlkzVeOQWTtrydS9gFV_ayU4947_2ixgf5igZ9bcLllWRpjEStv0ch32ddZo8oWaIuUded_jVYhR85G6C1ihRZkAT3zogH0eOBpVo5gfWUQy2C9Iem_VVU85BTEmIWu-pJ-GOa5JOI0t18w4oiHIIveVXYVKoxGbKoh0OUB1bqbwxiCifQtfFgX6ZTw4lX8HvXmSKUuOKB26mvzcgTGgg_gPqLtPPUalSpbdeNRrpn_JP6zWA',
+  transfer_list: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbImd6Y1FYcVowd0p6UkdEb01nUDZaRlozQVMza0VZQnhyIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NTAwLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA1NjQ0OTA5MTM5MTk3OTkwIiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM2NDYzNjA4MTE5MzMyIn0.P2Kd8kKLLQzmMTUCSP_FTMRDon6j1tasX43I6e8KFKe6fGnBGoXjy7W-jBJbeyyzOY7lqv1f732gs1miSGjQ2RhUxxfE8gzRNYMFszPigEjIj40dacb8Grg71GpRxTJu0AL__exv1sLa94bYg5sULC7FlbfjElG_WmXWwe1EKFTboL5pb_-MKviMTkgew7sexGYOZGSNtEHYPzc0U9llq0bAx7okP9VmHMU2QVuWWyqf6Zs-8VASH8ucv7c6cs4NOFofJ4tAJbw8n7dzctDmmiCZzAHhuNM8X5zuyUOA3etV_ysm5eXdQYRQOgfHvUXmbzK5VSef7UTCXqMWlySV9w',
+  delete_file: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIkRhSjNKN2RIVVNFc3piTENXam50dHd0Zm12UVlWczE0Il0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NDg0LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA1NjQ1NDI1ODI3MTE5MTUwIiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM2Mzk2NjgzODA0Njc4In0.Xq486dBpLcCM1gWYyB3a0yg1zoSXxJJqBxxnlW9Scqkdr0XRLYYI1rg4kLIhvBmCbBN-iHpPnAO4sV68jww29fy33wKceg99nTcEUiCsbmqHTGGp7elFhvBNojXWcy-gIaUz_TO45KryB8RGOfUzMe3TKXeb0EaVgsryOsWzrJED4zgzyqNrTJYXWHVDeHTgea_mQkh3FV4mBCHM2t84_FpBsaLSQ6_ov0CdkKCL5UZRuayDmKHw3d8t1L0TJp5ssDiSgYNjeybrC9p9gfoleROlqR0EEV7TsdpgCZngOiv5mi-gBc6IsxK7w1rojVivW9YkBsJePwlnZWx8WApUjQ'
 };
 
 // 生成解说文案
@@ -175,9 +187,12 @@ export async function pollTaskUntilComplete(
       } catch (err: any) {
         retries++;
         if (retries >= maxRetries) throw err;
-        const isNetworkError = err.code === 'ERR_NETWORK' || err.code === 'ERR_NETWORK_CHANGED' || err.message === 'Network Error';
-        if (!isNetworkError) throw err;
-        console.warn(`网络错误，${retries}/${maxRetries}次重试...`, err.message);
+        const isTransientError =
+          err.code === 'ERR_NETWORK' || err.code === 'ERR_NETWORK_CHANGED' || err.message === 'Network Error' ||
+          err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ||
+          (err.response && [502, 503, 504].includes(err.response.status));
+        if (!isTransientError) throw err;
+        console.warn(`临时错误(${err.code || err.response?.status})，${retries}/${maxRetries}次重试...`, err.message);
         await new Promise(resolve => setTimeout(resolve, 3000 * retries));
       }
     }
@@ -212,4 +227,48 @@ export async function pollTaskUntilComplete(
   }
   
   throw new Error('任务超时');
+}
+
+// 预转存文件
+export async function preUpload(request: IPreUploadRequest): Promise<IPreUploadResponse> {
+  const response = await axios.post('/api/pre_upload/run', request, {
+    headers: {
+      'Authorization': `Bearer ${TOKENS.pre_upload}`,
+      'Content-Type': 'application/json'
+    }
+  });
+  return response.data;
+}
+
+// 上传转存任务
+export async function uploadTask(request: IUploadTaskRequest): Promise<IUploadTaskResponse> {
+  const response = await axios.post('/api/upload_task/run', request, {
+    headers: {
+      'Authorization': `Bearer ${TOKENS.upload_task}`,
+      'Content-Type': 'application/json'
+    }
+  });
+  return response.data;
+}
+
+// 文件传输列表
+export async function fetchTransferList(request: ITransferListRequest): Promise<ITransferListResponse> {
+  const response = await axios.post('/api/transfer_list/run', request, {
+    headers: {
+      'Authorization': `Bearer ${TOKENS.transfer_list}`,
+      'Content-Type': 'application/json'
+    }
+  });
+  return response.data;
+}
+
+// 删除文件
+export async function deleteFile(request: IDeleteFileRequest): Promise<IDeleteFileResponse> {
+  const response = await axios.post('/api/delete_file/run', request, {
+    headers: {
+      'Authorization': `Bearer ${TOKENS.delete_file}`,
+      'Content-Type': 'application/json'
+    }
+  });
+  return response.data;
 }

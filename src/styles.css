@@ -19,12 +19,15 @@ body {
   max-width: 480px;
   margin: 0 auto;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ========== 页面容器 ========== */
 .page {
   padding: 20px 16px;
   animation: fadeIn 0.25s ease;
+  flex: 1;
 }
 
 @keyframes fadeIn {
@@ -623,6 +626,10 @@ body {
   border-radius: 4px;
 }
 
+.audio-card-list-collapsed {
+  margin-top: 6px;
+}
+
 .audio-card {
   display: flex;
   align-items: center;
@@ -724,4 +731,169 @@ body {
   justify-content: center;
   font-size: 12px;
   font-weight: bold;
+}
+
+/* ========== 上传文件按钮 ========== */
+.btn-upload {
+  background: linear-gradient(135deg, #36d1dc, #5b86e5) !important;
+  color: #fff !important;
+  border: none !important;
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+  height: 38px !important;
+  transition: all 0.2s !important;
+}
+.btn-upload:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+/* ========== 上传弹窗 ========== */
+.upload-modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.upload-modal {
+  background: #fff;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 460px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  animation: modalSlideIn 0.25s ease-out;
+}
+
+@keyframes modalSlideIn {
+  from { transform: translateY(30px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.upload-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.upload-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #1a1a2e;
+}
+
+.upload-modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* ========== 预转存结果 ========== */
+.pre-upload-section {
+  margin-bottom: 16px;
+}
+
+.pre-upload-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #333;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.pre-upload-file {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  transition: all 0.15s;
+}
+
+.pre-upload-file:hover {
+  background: #f0f7ff;
+  border-color: #d6e4ff;
+}
+
+.pre-upload-file.invalid {
+  background: #fff2f0;
+  border-color: #ffccc7;
+}
+
+.pre-upload-file-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1a1a2e;
+  word-break: break-all;
+}
+
+.pre-upload-file-meta {
+  font-size: 11px;
+  color: #888;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.pre-upload-file-warn {
+  font-size: 11px;
+  color: #ff4d4f;
+  margin-top: 4px;
+}
+
+/* ========== 传输列表 ========== */
+.transfer-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid #eee;
+  transition: all 0.15s;
+}
+
+.transfer-item:hover {
+  border-color: #d6e4ff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.transfer-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.transfer-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1a1a2e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer-item-meta {
+  font-size: 11px;
+  color: #999;
+  margin-top: 2px;
+}
+
+.transfer-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  flex-shrink: 0;
 }

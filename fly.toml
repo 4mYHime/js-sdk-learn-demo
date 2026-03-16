@@ -16,8 +16,11 @@ primary_region = 'sin'
   auto_start_machines = true
   min_machines_running = 0
 
+  [http_service.http_options]
+    idle_timeout = 300
+
 [[vm]]
-  size = 'shared-cpu-1x'
-  memory = '256mb'
+  size = 'shared-cpu-4x'
+  memory = '4096mb'
   cpus = 1
-  memory_mb = 256
+  memory_mb = 4096

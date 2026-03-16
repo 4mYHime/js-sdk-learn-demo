@@ -68,6 +68,26 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/v2/, '/v2'),
       },
+      '/api/pre_upload': {
+        target: 'https://zzz7f2thfq.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/pre_upload/, ''),
+      },
+      '/api/upload_task': {
+        target: 'https://3mby87347p.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/upload_task/, ''),
+      },
+      '/api/transfer_list': {
+        target: 'https://v6ztd4tn4r.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/transfer_list/, ''),
+      },
+      '/api/delete_file': {
+        target: 'https://hptt42558m.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/delete_file/, ''),
+      },
     },
   }
 })

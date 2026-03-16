@@ -196,6 +196,84 @@ export interface ITaskStatusResponse {
   };
 }
 
+// 预转存文件
+export interface IPreUploadFile {
+  id: number;
+  upload_id: string;
+  pre_file_id: string;
+  file_name: string;
+  file_category: number; // 1=视频, 2=音频, 3=图片, 4=文档, 5=种子, 6=其他
+  file_size: number;
+  name_tag: string | null;
+  category_tag: string | null;
+  type_tag: string;
+  index: number;
+  related_record_id: string | null;
+  related_record_name: string | null;
+  invalid_message: string | null;
+}
+
+// 预转存请求
+export interface IPreUploadRequest {
+  link: string;
+  tag: string;
+  type_tag: string;
+  app_key: string;
+}
+
+// 预转存响应
+export interface IPreUploadResponse {
+  code: number;
+  message: string;
+  data: {
+    video: IPreUploadFile[];
+    subtitle: IPreUploadFile[];
+    image: IPreUploadFile[];
+    other: IPreUploadFile[];
+  };
+}
+
+// 上传转存任务请求
+export interface IUploadTaskRequest {
+  link?: string;
+  upload_id?: string;
+  app_key: string;
+}
+
+// 上传转存任务响应
+export interface IUploadTaskResponse {
+  response_data: any;
+}
+
+// 文件传输列表请求
+export interface ITransferListRequest {
+  page: number;
+  limit: number;
+  status: string;
+  order?: string;
+  order_by?: string;
+  app_key: string;
+}
+
+// 文件传输列表响应
+export interface ITransferListResponse {
+  api_response: any;
+  total: number;
+  file_list: any;
+}
+
+// 删除文件请求
+export interface IDeleteFileRequest {
+  file_id: string;
+  app_key: string;
+}
+
+// 删除文件响应
+export interface IDeleteFileResponse {
+  success: boolean;
+  error_message: string;
+}
+
 // 工作流状态
 export interface IWorkflowState {
   step: number;

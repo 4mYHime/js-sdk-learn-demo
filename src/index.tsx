@@ -1,12 +1,12 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Steps, Button, Card, List, Avatar, Alert, Select, Input, Spin, Result, Tag, Empty, Radio, message, Tooltip } from 'antd';
-import { IMovie, INarratorTemplate, IBGM, IDubbing, IEpisodeData, ICloudFile } from './types';
+import { IMovie, INarratorTemplate, IBGM, IDubbing, IEpisodeData, ICloudFile, IPreUploadFile, IPreUploadResponse } from './types';
 import { fetchMovies } from './api/movies';
 import { fetchTemplates } from './api/templates';
 import { fetchBGMList } from './api/bgm';
 import { fetchDubbingList } from './api/dubbing';
-import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete } from './api/tasks';
+import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete, preUpload, uploadTask, fetchTransferList, deleteFile } from './api/tasks';
 import {
   IOrder, ITask, TaskType, OrderStatus, DeliveryMode,
   getCurrentUser, setCurrentUser, logout,
@@ -97,7 +97,25 @@ function LoadApp() {
   const [targetCharacterName, setTargetCharacterName] = useState('');
   const [vendorRequirements, setVendorRequirements] = useState('');
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('staged');
+  const [bgmListExpanded, setBgmListExpanded] = useState(true);
+  const [dubbingListExpanded, setDubbingListExpanded] = useState(true);
   
+  // 上传文件相关状态
+  const [uploadModalVisible, setUploadModalVisible] = useState(false);
+  const [uploadLink, setUploadLink] = useState('');
+  const [uploadTag, setUploadTag] = useState('');
+  const [uploadTypeTag, setUploadTypeTag] = useState('电影');
+  const [uploadStep, setUploadStep] = useState<'input' | 'preview' | 'uploading' | 'transfers'>('input');
+  const [preUploadLoading, setPreUploadLoading] = useState(false);
+  const [preUploadResult, setPreUploadResult] = useState<IPreUploadResponse | null>(null);
+  const [preUploadUploadId, setPreUploadUploadId] = useState('');
+  const [uploadTaskLoading, setUploadTaskLoading] = useState(false);
+  const [transferList, setTransferList] = useState<any[]>([]);
+  const [transferListLoading, setTransferListLoading] = useState(false);
+  const [transferListTotal, setTransferListTotal] = useState(0);
+  const [transferListPage, setTransferListPage] = useState(1);
+  const transferPollingRef = useRef<NodeJS.Timeout | null>(null);
+
   // 音频试听状态
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playingAudioUrl, setPlayingAudioUrl] = useState<string | null>(null);
@@ -988,6 +1006,263 @@ function LoadApp() {
     setErrorMessage('');
   };
   
+  // 上传文件：打开弹窗
+  const openUploadModal = () => {
+    setUploadLink('');
+    setUploadTag('');
+    setUploadTypeTag('电影');
+    setUploadStep('input');
+    setPreUploadResult(null);
+    setPreUploadUploadId('');
+    setUploadModalVisible(true);
+  };
+
+  // 上传文件：关闭弹窗
+  const closeUploadModal = () => {
+    setUploadModalVisible(false);
+  };
+
+  // 上传文件：预转存解析
+  const handlePreUpload = async () => {
+    if (!uploadLink.trim()) { message.error('请输入资源链接'); return; }
+    if (!uploadTag.trim()) { message.error('请输入转存任务名'); return; }
+    setPreUploadLoading(true);
+    try {
+      const res = await preUpload({ link: uploadLink.trim(), tag: uploadTag.trim(), type_tag: uploadTypeTag, app_key: appKey });
+      setPreUploadResult(res);
+      // 从返回的文件中提取 upload_id
+      const allFiles = [...(res.data?.video || []), ...(res.data?.subtitle || []), ...(res.data?.image || []), ...(res.data?.other || [])];
+      if (allFiles.length > 0) {
+        setPreUploadUploadId(allFiles[0].upload_id);
+      }
+      setUploadStep('preview');
+    } catch (error: any) {
+      message.error('解析失败: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setPreUploadLoading(false);
+    }
+  };
+
+  // 上传文件：确认转存
+  const handleConfirmUpload = async () => {
+    if (!preUploadUploadId) { message.error('缺少 upload_id'); return; }
+    setUploadTaskLoading(true);
+    try {
+      await uploadTask({ upload_id: preUploadUploadId, app_key: appKey });
+      message.success('转存任务已提交');
+      setUploadStep('transfers');
+      loadTransferList(1);
+    } catch (error: any) {
+      message.error('转存失败: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setUploadTaskLoading(false);
+    }
+  };
+
+  // 加载传输列表
+  const loadTransferList = async (pg: number = 1) => {
+    setTransferListLoading(true);
+    try {
+      const res = await fetchTransferList({ page: pg, limit: 10, status: '', app_key: appKey });
+      const list = Array.isArray(res.file_list) ? res.file_list : (res.file_list ? Object.values(res.file_list) : []);
+      setTransferList(list);
+      setTransferListTotal(res.total || 0);
+      setTransferListPage(pg);
+    } catch (error: any) {
+      console.error('加载传输列表失败:', error);
+      message.error('加载传输列表失败');
+    } finally {
+      setTransferListLoading(false);
+    }
+  };
+
+  // 删除文件
+  const handleDeleteFile = async (fileId: string) => {
+    try {
+      const res = await deleteFile({ file_id: fileId, app_key: appKey });
+      if (res.success) {
+        message.success('删除成功');
+        loadTransferList(transferListPage);
+      } else {
+        message.error(res.error_message || '删除失败');
+      }
+    } catch (error: any) {
+      message.error('删除失败: ' + (error.message));
+    }
+  };
+
+  // 格式化文件大小
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + 'B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + 'MB';
+    return (bytes / 1024 / 1024 / 1024).toFixed(2) + 'GB';
+  };
+
+  // 渲染上传弹窗
+  const renderUploadModal = () => {
+    if (!uploadModalVisible) return null;
+    return (
+      <div className="upload-modal-overlay" onClick={closeUploadModal}>
+        <div className="upload-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="upload-modal-header">
+            <h3>{uploadStep === 'transfers' ? '📋 文件传输列表' : '📤 上传文件到云盘'}</h3>
+            <Button type="text" onClick={closeUploadModal}>✕</Button>
+          </div>
+
+          {uploadStep === 'input' && (
+            <div className="upload-modal-body">
+              <div className="form-group">
+                <label className="form-label">资源链接 <span style={{ color: '#ff4d4f' }}>*</span></label>
+                <Input placeholder="百度网盘分享链接或资源直链URL" value={uploadLink} onChange={(e) => setUploadLink(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">转存任务名 <span style={{ color: '#ff4d4f' }}>*</span></label>
+                <Input placeholder="例如：电影名称" value={uploadTag} onChange={(e) => setUploadTag(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">业务类型 <span style={{ color: '#ff4d4f' }}>*</span></label>
+                <Select value={uploadTypeTag} onChange={(v) => setUploadTypeTag(v)} style={{ width: '100%' }}>
+                  <Select.Option value="电影">电影</Select.Option>
+                  <Select.Option value="短剧">短剧</Select.Option>
+                  <Select.Option value="图片">图片</Select.Option>
+                </Select>
+              </div>
+              <Button type="primary" block className="btn-primary-gradient" loading={preUploadLoading} onClick={handlePreUpload}>
+                解析文件
+              </Button>
+            </div>
+          )}
+
+          {uploadStep === 'preview' && preUploadResult && (
+            <div className="upload-modal-body">
+              {preUploadResult.data?.video?.length > 0 && (
+                <div className="pre-upload-section">
+                  <h4>🎬 视频列表 ({preUploadResult.data.video.length})</h4>
+                  {preUploadResult.data.video.map((f: IPreUploadFile) => (
+                    <div key={f.id} className={`pre-upload-file ${f.invalid_message ? 'invalid' : ''}`}>
+                      <div className="pre-upload-file-name">{f.file_name}</div>
+                      <div className="pre-upload-file-meta">
+                        {formatFileSize(f.file_size)}
+                        {f.name_tag && <Tag color="blue" style={{ marginLeft: 4 }}>{f.name_tag}</Tag>}
+                        <Tag color="green" style={{ marginLeft: 4 }}>EP{f.index}</Tag>
+                        {f.related_record_name ? <Tag color="purple" style={{ marginLeft: 4 }}>关联: {f.related_record_name}</Tag> : <span style={{ color: '#fa8c16', marginLeft: 4 }}>✕ 未关联</span>}
+                      </div>
+                      {f.invalid_message && <div className="pre-upload-file-warn">{f.invalid_message}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {preUploadResult.data?.subtitle?.length > 0 && (
+                <div className="pre-upload-section">
+                  <h4>📝 字幕列表 ({preUploadResult.data.subtitle.length})</h4>
+                  {preUploadResult.data.subtitle.map((f: IPreUploadFile) => (
+                    <div key={f.id} className={`pre-upload-file ${f.invalid_message ? 'invalid' : ''}`}>
+                      <div className="pre-upload-file-name">{f.file_name}</div>
+                      <div className="pre-upload-file-meta">
+                        {formatFileSize(f.file_size)}
+                        <Tag color="green" style={{ marginLeft: 4 }}>EP{f.index}</Tag>
+                        {f.related_record_name ? <Tag color="purple" style={{ marginLeft: 4 }}>关联: {f.related_record_name}</Tag> : <span style={{ color: '#fa8c16', marginLeft: 4 }}>✕ 未关联</span>}
+                      </div>
+                      {f.invalid_message && <div className="pre-upload-file-warn">{f.invalid_message}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {preUploadResult.data?.image?.length > 0 && (
+                <div className="pre-upload-section">
+                  <h4>🖼️ 图片列表 ({preUploadResult.data.image.length})</h4>
+                  {preUploadResult.data.image.map((f: IPreUploadFile) => (
+                    <div key={f.id} className={`pre-upload-file ${f.invalid_message ? 'invalid' : ''}`}>
+                      <div className="pre-upload-file-name">{f.file_name}</div>
+                      <div className="pre-upload-file-meta">{formatFileSize(f.file_size)}</div>
+                      {f.invalid_message && <div className="pre-upload-file-warn">{f.invalid_message}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {preUploadResult.data?.other?.length > 0 && (
+                <div className="pre-upload-section">
+                  <h4>📁 其他文件 ({preUploadResult.data.other.length})</h4>
+                  {preUploadResult.data.other.map((f: IPreUploadFile) => (
+                    <div key={f.id} className={`pre-upload-file ${f.invalid_message ? 'invalid' : ''}`}>
+                      <div className="pre-upload-file-name">{f.file_name}</div>
+                      <div className="pre-upload-file-meta">{formatFileSize(f.file_size)}</div>
+                      {f.invalid_message && <div className="pre-upload-file-warn">{f.invalid_message}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+                <Button onClick={() => setUploadStep('input')} style={{ flex: 1 }}>返回修改</Button>
+                <Button type="primary" className="btn-primary-gradient" loading={uploadTaskLoading} onClick={handleConfirmUpload} style={{ flex: 1 }}>
+                  全部转存
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {uploadStep === 'uploading' && (
+            <div className="upload-modal-body" style={{ textAlign: 'center', padding: '40px 20px' }}>
+              <Spin tip="正在提交转存任务..." />
+            </div>
+          )}
+
+          {uploadStep === 'transfers' && (
+            <div className="upload-modal-body">
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                <Button size="small" onClick={() => loadTransferList(transferListPage)} loading={transferListLoading}>刷新</Button>
+              </div>
+              {transferListLoading && transferList.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: 30 }}><Spin tip="加载中..." /></div>
+              ) : transferList.length === 0 ? (
+                <Empty description="暂无传输记录" />
+              ) : (
+                <>
+                  {transferList.map((item: any, idx: number) => {
+                    const statusMap: Record<string, { text: string; color: string }> = {
+                      '0': { text: '初始化', color: '#999' },
+                      '1': { text: '上传中', color: '#1890ff' },
+                      '2': { text: '已完成', color: '#52c41a' },
+                      '3': { text: '上传失败', color: '#ff4d4f' },
+                    };
+                    const st = statusMap[String(item.status)] || { text: String(item.status), color: '#999' };
+                    return (
+                      <div key={item.id || idx} className="transfer-item">
+                        <div className="transfer-item-info">
+                          <div className="transfer-item-name" title={item.file_name || item.tag || ''}>{item.file_name || item.tag || `任务 ${idx + 1}`}</div>
+                          <div className="transfer-item-meta">
+                            {item.file_size ? formatFileSize(item.file_size) : ''}
+                            {item.created_at && <span style={{ marginLeft: 8 }}>{item.created_at}</span>}
+                          </div>
+                        </div>
+                        <div className="transfer-item-actions">
+                          <Tag color={st.color}>{st.text}</Tag>
+                          <Button size="small" danger onClick={() => handleDeleteFile(item.file_id || item.id)}>删除</Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {transferListTotal > 10 && (
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 12 }}>
+                      <Button size="small" disabled={transferListPage <= 1} onClick={() => loadTransferList(transferListPage - 1)}>上一页</Button>
+                      <span style={{ fontSize: 12, lineHeight: '24px' }}>{transferListPage}/{Math.ceil(transferListTotal / 10)}</span>
+                      <Button size="small" disabled={transferListPage >= Math.ceil(transferListTotal / 10)} onClick={() => loadTransferList(transferListPage + 1)}>下一页</Button>
+                    </div>
+                  )}
+                </>
+              )}
+              <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+                <Button onClick={() => setUploadStep('input')} style={{ flex: 1 }}>继续上传</Button>
+                <Button type="primary" onClick={closeUploadModal} style={{ flex: 1 }}>关闭</Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // 渲染步骤内容
   const renderStepContent = () => {
     switch (currentStep) {
@@ -1083,7 +1358,10 @@ function LoadApp() {
                   <>
                     <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>SRT文件列表</label>
-                      <Button size="small" onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage)} loading={episodeSrtFilesLoading}>刷新</Button>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <Button size="small" type="link" onClick={openUploadModal}>📤上传</Button>
+                        <Button size="small" onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage)} loading={episodeSrtFilesLoading}>刷新</Button>
+                      </div>
                     </div>
                     {episodeSrtFilesLoading ? (
                       <Spin tip="加载SRT文件..." />
@@ -1130,7 +1408,10 @@ function LoadApp() {
                   <>
                     <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>视频文件列表（按大小排序）</label>
-                      <Button size="small" onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage)} loading={episodeVideoFilesLoading}>刷新</Button>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <Button size="small" type="link" onClick={openUploadModal}>📤上传</Button>
+                        <Button size="small" onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage)} loading={episodeVideoFilesLoading}>刷新</Button>
+                      </div>
                     </div>
                     {episodeVideoFilesLoading ? (
                       <Spin tip="加载视频文件..." />
@@ -1355,89 +1636,123 @@ function LoadApp() {
                 </div>
                 
                 <div className="form-group">
-                  <label className="form-label">选择BGM</label>
-                  <div className={`audio-card-list ${selectedBGM?.name === '自定义' ? 'compact' : ''}`}>
-                    {/* 不使用BGM选项 */}
-                    <div 
-                      className={`audio-card ${selectedBGM?.id === -1 ? 'audio-card-selected' : ''}`}
-                      onClick={() => {
-                        setSelectedBGM({ id: -1, name: 'no_bgm', bgm_file_id: 'no_bgm', status: null, remark: null, bgm_demo_url: '', type: null, tag: null, description: null } as IBGM);
-                        setSelectedCustomBgmFile(null);
-                      }}
-                    >
-                      <div className="audio-card-icon">🔇</div>
-                      <div className="audio-card-info">
-                        <div className="audio-card-name">不使用BGM</div>
-                        <div className="audio-card-desc">静音模式</div>
-                      </div>
-                      {selectedBGM?.id === -1 && <div className="audio-card-check">✓</div>}
-                    </div>
-                    
-                    {/* BGM列表 */}
-                    {bgmList.map(bgm => {
-                      const isSelected = selectedBGM?.id === bgm.id;
-                      const isPlaying = playingAudioUrl === bgm.bgm_demo_url;
-                      return (
-                        <div 
-                          key={bgm.id}
-                          className={`audio-card ${isSelected ? 'audio-card-selected' : ''}`}
-                          onClick={() => {
-                            setSelectedBGM(bgm);
-                            setSelectedCustomBgmFile(null);
-                            if (bgm.name === '自定义' && customBgmFiles.length === 0) loadCustomBgmFiles();
-                          }}
-                        >
-                          <div className="audio-card-icon">🎵</div>
-                          <div className="audio-card-info">
-                            <div className="audio-card-name">{bgm.name}</div>
-                            <div className="audio-card-desc">
-                              {bgm.tag && <Tag color="blue" style={{ fontSize: 10 }}>{bgm.tag}</Tag>}
-                              {bgm.description && (
-                                <Tooltip title={bgm.description} placement="top">
-                                  <span className="audio-card-desc-text">{bgm.description}</span>
-                                </Tooltip>
-                              )}
-                            </div>
-                          </div>
-                          {bgm.bgm_demo_url && bgm.name !== '自定义' && (
-                            <Button 
-                              size="small" 
-                              type={isPlaying ? 'primary' : 'default'}
-                              className="audio-play-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleAudio(bgm.bgm_demo_url);
-                              }}
-                            >
-                              {isPlaying ? '⏸ 暂停' : '▶ 试听'}
-                            </Button>
-                          )}
-                          {isSelected && <div className="audio-card-check">✓</div>}
-                        </div>
-                      );
-                    })}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label className="form-label" style={{ marginBottom: 0 }}>选择BGM</label>
+                    {selectedBGM && !bgmListExpanded && (
+                      <Button size="small" type="link" onClick={() => setBgmListExpanded(true)}>重新选择</Button>
+                    )}
                   </div>
-                </div>
-
-                {selectedBGM?.name === '自定义' && (
-                  <div className="cloud-file-section" style={{ marginBottom: 12 }}>
-                    <div style={{ marginBottom: 6 }}>
-                      <label className="form-label" style={{ fontSize: 11, marginBottom: 4 }}>
-                        已选BGM文件 <span style={{ color: '#ff4d4f' }}>*必需</span>
-                      </label>
-                      {selectedCustomBgmFile ? (
-                        <Tag color="blue" closable onClose={() => setSelectedCustomBgmFile(null)} title={selectedCustomBgmFile.file_name}
-                          style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer' }}
-                          onClick={() => { navigator.clipboard.writeText(selectedCustomBgmFile.file_name); message.success('文件名已复制'); }}>
-                          {selectedCustomBgmFile.file_name}
-                        </Tag>
-                      ) : (
-                        <Tag color="default">未选择</Tag>
+                  {selectedBGM && !bgmListExpanded ? (
+                    <div className="audio-card-list-collapsed">
+                      <div className="audio-card audio-card-selected">
+                        <div className="audio-card-icon">{selectedBGM.id === -1 ? '🔇' : '🎵'}</div>
+                        <div className="audio-card-info">
+                          <div className="audio-card-name">{selectedBGM.id === -1 ? '不使用BGM' : selectedBGM.name}</div>
+                          <div className="audio-card-desc">
+                            {selectedBGM.id === -1 ? '静音模式' : (
+                              <>
+                                {selectedBGM.tag && <Tag color="blue" style={{ fontSize: 10 }}>{selectedBGM.tag}</Tag>}
+                                {selectedBGM.description && <span className="audio-card-desc-text">{selectedBGM.description}</span>}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <div className="audio-card-check">✓</div>
+                      </div>
+                      {selectedBGM.name === '自定义' && selectedCustomBgmFile && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: '#666' }}>
+                          已选文件：<Tag color="blue" style={{ fontSize: 11 }}>{selectedCustomBgmFile.file_name}</Tag>
+                        </div>
                       )}
                     </div>
+                  ) : (
+                    <div className={`audio-card-list ${selectedBGM?.name === '自定义' ? 'compact' : ''}`}>
+                      {/* 不使用BGM选项 */}
+                      <div 
+                        className={`audio-card ${selectedBGM?.id === -1 ? 'audio-card-selected' : ''}`}
+                        onClick={() => {
+                          setSelectedBGM({ id: -1, name: 'no_bgm', bgm_file_id: 'no_bgm', status: null, remark: null, bgm_demo_url: '', type: null, tag: null, description: null } as IBGM);
+                          setSelectedCustomBgmFile(null);
+                          setBgmListExpanded(false);
+                        }}
+                      >
+                        <div className="audio-card-icon">🔇</div>
+                        <div className="audio-card-info">
+                          <div className="audio-card-name">不使用BGM</div>
+                          <div className="audio-card-desc">静音模式</div>
+                        </div>
+                        {selectedBGM?.id === -1 && <div className="audio-card-check">✓</div>}
+                      </div>
+                      
+                      {/* BGM列表 */}
+                      {bgmList.map(bgm => {
+                        const isSelected = selectedBGM?.id === bgm.id;
+                        const isPlaying = playingAudioUrl === bgm.bgm_demo_url;
+                        return (
+                          <div 
+                            key={bgm.id}
+                            className={`audio-card ${isSelected ? 'audio-card-selected' : ''}`}
+                            onClick={() => {
+                              setSelectedBGM(bgm);
+                              setSelectedCustomBgmFile(null);
+                              if (bgm.name === '自定义') { loadCustomBgmFiles(); } else { setBgmListExpanded(false); }
+                            }}
+                          >
+                            <div className="audio-card-icon">🎵</div>
+                            <div className="audio-card-info">
+                              <div className="audio-card-name">{bgm.name}</div>
+                              <div className="audio-card-desc">
+                                {bgm.tag && <Tag color="blue" style={{ fontSize: 10 }}>{bgm.tag}</Tag>}
+                                {bgm.description && (
+                                  <Tooltip title={bgm.description} placement="top">
+                                    <span className="audio-card-desc-text">{bgm.description}</span>
+                                  </Tooltip>
+                                )}
+                              </div>
+                            </div>
+                            {bgm.bgm_demo_url && bgm.name !== '自定义' && (
+                              <Button 
+                                size="small" 
+                                type={isPlaying ? 'primary' : 'default'}
+                                className="audio-play-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleAudio(bgm.bgm_demo_url);
+                                }}
+                              >
+                                {isPlaying ? '⏸ 暂停' : '▶ 试听'}
+                              </Button>
+                            )}
+                            {isSelected && <div className="audio-card-check">✓</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {selectedBGM?.name === '自定义' && bgmListExpanded && (
+                  <div className="cloud-file-section" style={{ marginBottom: 12 }}>
+                    <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="form-label" style={{ fontSize: 11, marginBottom: 0 }}>
+                        已选BGM文件 <span style={{ color: '#ff4d4f' }}>*必需</span>
+                      </label>
+                    </div>
+                    {selectedCustomBgmFile ? (
+                      <Tag color="blue" closable onClose={() => setSelectedCustomBgmFile(null)} title={selectedCustomBgmFile.file_name}
+                        style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer', marginBottom: 6 }}
+                        onClick={() => { navigator.clipboard.writeText(selectedCustomBgmFile.file_name); message.success('文件名已复制'); }}>
+                        {selectedCustomBgmFile.file_name}
+                      </Tag>
+                    ) : (
+                      <Tag color="default" style={{ marginBottom: 6 }}>未选择</Tag>
+                    )}
                     <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>云盘文件列表</label>
-                      <Button size="small" onClick={() => loadCustomBgmFiles(customBgmFilesPage)} loading={customBgmFilesLoading}>刷新</Button>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <Button size="small" type="link" onClick={openUploadModal}>📤上传</Button>
+                        <Button size="small" onClick={() => loadCustomBgmFiles(customBgmFilesPage)} loading={customBgmFilesLoading}>刷新</Button>
+                      </div>
                     </div>
                     {customBgmFilesLoading ? (
                       <Spin tip="加载文件..." />
@@ -1460,7 +1775,7 @@ function LoadApp() {
                                     </div>
                                   </div>
                                   <Button size="small" type={isSelected ? 'primary' : 'default'} style={{ marginLeft: 8 }}
-                                    onClick={() => setSelectedCustomBgmFile(isSelected ? null : file)}>
+                                    onClick={() => { setSelectedCustomBgmFile(isSelected ? null : file); if (!isSelected) setBgmListExpanded(false); }}>
                                     {isSelected ? '已选择' : '选择'}
                                   </Button>
                                 </div>
@@ -1481,68 +1796,97 @@ function LoadApp() {
                 )}
                 
                 <div className="form-group">
-                  <label className="form-label">选择配音</label>
-                  <div className={`audio-card-list ${selectedDubbing?.name === '自定义' ? 'compact' : ''}`}>
-                    {dubbingList.map(dub => {
-                      const isSelected = selectedDubbing?.id === dub.id;
-                      const isPlaying = playingAudioUrl === dub.dubbing_demo_url;
-                      return (
-                        <div 
-                          key={dub.id}
-                          className={`audio-card ${isSelected ? 'audio-card-selected' : ''}`}
-                          onClick={() => {
-                            setSelectedDubbing(dub);
-                            setSelectedCustomDubbingFile(null);
-                            if (dub.name === '自定义' && customDubbingFiles.length === 0) loadCustomDubbingFiles();
-                          }}
-                        >
-                          <div className="audio-card-icon">🎙️</div>
-                          <div className="audio-card-info">
-                            <div className="audio-card-name">{dub.name}</div>
-                            <div className="audio-card-desc">
-                              <Tag color="purple" style={{ fontSize: 10, marginRight: 4 }}>{dub.role}</Tag>
-                              {dub.language && <Tag color="cyan" style={{ fontSize: 10 }}>{dub.language}</Tag>}
-                            </div>
-                          </div>
-                          {dub.dubbing_demo_url && dub.name !== '自定义' && (
-                            <Button 
-                              size="small" 
-                              type={isPlaying ? 'primary' : 'default'}
-                              className="audio-play-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleAudio(dub.dubbing_demo_url);
-                              }}
-                            >
-                              {isPlaying ? '⏸ 暂停' : '▶ 试听'}
-                            </Button>
-                          )}
-                          {isSelected && <div className="audio-card-check">✓</div>}
-                        </div>
-                      );
-                    })}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label className="form-label" style={{ marginBottom: 0 }}>选择配音</label>
+                    {selectedDubbing && !dubbingListExpanded && (
+                      <Button size="small" type="link" onClick={() => setDubbingListExpanded(true)}>重新选择</Button>
+                    )}
                   </div>
-                </div>
-
-                {selectedDubbing?.name === '自定义' && (
-                  <div className="cloud-file-section" style={{ marginBottom: 12 }}>
-                    <div style={{ marginBottom: 6 }}>
-                      <label className="form-label" style={{ fontSize: 11, marginBottom: 4 }}>
-                        已选配音文件 <span style={{ color: '#ff4d4f' }}>*必需</span>
-                      </label>
-                      {selectedCustomDubbingFile ? (
-                        <Tag color="blue" closable onClose={() => setSelectedCustomDubbingFile(null)} title={selectedCustomDubbingFile.file_name}
-                          style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer' }}
-                          onClick={() => { navigator.clipboard.writeText(selectedCustomDubbingFile.file_name); message.success('文件名已复制'); }}>
-                          {selectedCustomDubbingFile.file_name}
-                        </Tag>
-                      ) : (
-                        <Tag color="default">未选择</Tag>
+                  {selectedDubbing && !dubbingListExpanded ? (
+                    <div className="audio-card-list-collapsed">
+                      <div className="audio-card audio-card-selected">
+                        <div className="audio-card-icon">🎙️</div>
+                        <div className="audio-card-info">
+                          <div className="audio-card-name">{selectedDubbing.name}</div>
+                          <div className="audio-card-desc">
+                            <Tag color="purple" style={{ fontSize: 10, marginRight: 4 }}>{selectedDubbing.role}</Tag>
+                            {selectedDubbing.language && <Tag color="cyan" style={{ fontSize: 10 }}>{selectedDubbing.language}</Tag>}
+                          </div>
+                        </div>
+                        <div className="audio-card-check">✓</div>
+                      </div>
+                      {selectedDubbing.name === '自定义' && selectedCustomDubbingFile && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: '#666' }}>
+                          已选文件：<Tag color="blue" style={{ fontSize: 11 }}>{selectedCustomDubbingFile.file_name}</Tag>
+                        </div>
                       )}
                     </div>
+                  ) : (
+                    <div className={`audio-card-list ${selectedDubbing?.name === '自定义' ? 'compact' : ''}`}>
+                      {dubbingList.map(dub => {
+                        const isSelected = selectedDubbing?.id === dub.id;
+                        const isPlaying = playingAudioUrl === dub.dubbing_demo_url;
+                        return (
+                          <div 
+                            key={dub.id}
+                            className={`audio-card ${isSelected ? 'audio-card-selected' : ''}`}
+                            onClick={() => {
+                              setSelectedDubbing(dub);
+                              setSelectedCustomDubbingFile(null);
+                              if (dub.name === '自定义') { loadCustomDubbingFiles(); } else { setDubbingListExpanded(false); }
+                            }}
+                          >
+                            <div className="audio-card-icon">🎙️</div>
+                            <div className="audio-card-info">
+                              <div className="audio-card-name">{dub.name}</div>
+                              <div className="audio-card-desc">
+                                <Tag color="purple" style={{ fontSize: 10, marginRight: 4 }}>{dub.role}</Tag>
+                                {dub.language && <Tag color="cyan" style={{ fontSize: 10 }}>{dub.language}</Tag>}
+                              </div>
+                            </div>
+                            {dub.dubbing_demo_url && dub.name !== '自定义' && (
+                              <Button 
+                                size="small" 
+                                type={isPlaying ? 'primary' : 'default'}
+                                className="audio-play-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleAudio(dub.dubbing_demo_url);
+                                }}
+                              >
+                                {isPlaying ? '⏸ 暂停' : '▶ 试听'}
+                              </Button>
+                            )}
+                            {isSelected && <div className="audio-card-check">✓</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {selectedDubbing?.name === '自定义' && dubbingListExpanded && (
+                  <div className="cloud-file-section" style={{ marginBottom: 12 }}>
+                    <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="form-label" style={{ fontSize: 11, marginBottom: 0 }}>
+                        已选配音文件 <span style={{ color: '#ff4d4f' }}>*必需</span>
+                      </label>
+                    </div>
+                    {selectedCustomDubbingFile ? (
+                      <Tag color="blue" closable onClose={() => setSelectedCustomDubbingFile(null)} title={selectedCustomDubbingFile.file_name}
+                        style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer', marginBottom: 6 }}
+                        onClick={() => { navigator.clipboard.writeText(selectedCustomDubbingFile.file_name); message.success('文件名已复制'); }}>
+                        {selectedCustomDubbingFile.file_name}
+                      </Tag>
+                    ) : (
+                      <Tag color="default" style={{ marginBottom: 6 }}>未选择</Tag>
+                    )}
                     <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>云盘文件列表</label>
-                      <Button size="small" onClick={() => loadCustomDubbingFiles(customDubbingFilesPage)} loading={customDubbingFilesLoading}>刷新</Button>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <Button size="small" type="link" onClick={openUploadModal}>📤上传</Button>
+                        <Button size="small" onClick={() => loadCustomDubbingFiles(customDubbingFilesPage)} loading={customDubbingFilesLoading}>刷新</Button>
+                      </div>
                     </div>
                     {customDubbingFilesLoading ? (
                       <Spin tip="加载文件..." />
@@ -1565,7 +1909,7 @@ function LoadApp() {
                                     </div>
                                   </div>
                                   <Button size="small" type={isSelected ? 'primary' : 'default'} style={{ marginLeft: 8 }}
-                                    onClick={() => setSelectedCustomDubbingFile(isSelected ? null : file)}>
+                                    onClick={() => { setSelectedCustomDubbingFile(isSelected ? null : file); if (!isSelected) setDubbingListExpanded(false); }}>
                                     {isSelected ? '已选择' : '选择'}
                                   </Button>
                                 </div>
@@ -1754,9 +2098,17 @@ function LoadApp() {
         </div>
       </div>
       
-      <Button type="primary" block className="btn-create" style={{ marginBottom: 20 }} onClick={startCreateOrder}>
+      <Button type="primary" block className="btn-create" style={{ marginBottom: 8 }} onClick={startCreateOrder}>
         + 创建新订单
       </Button>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        <Button block className="btn-upload" onClick={openUploadModal}>
+          📤 上传文件到云盘
+        </Button>
+        <Button block onClick={() => { setUploadStep('transfers'); setUploadModalVisible(true); loadTransferList(1); }}>
+          📋 传输列表
+        </Button>
+      </div>
       
       {orders.length === 0 ? (
         <Empty description="暂无订单" />
@@ -1993,16 +2345,25 @@ function LoadApp() {
   );
 
   // 根据页面类型渲染
-  switch (page) {
-    case 'login':
-      return renderLoginPage();
-    case 'orders':
-      return renderOrdersPage();
-    case 'detail':
-      return renderDetailPage();
-    case 'create':
-      return renderCreatePage();
-    default:
-      return renderLoginPage();
-  }
+  const pageContent = (() => {
+    switch (page) {
+      case 'login':
+        return renderLoginPage();
+      case 'orders':
+        return renderOrdersPage();
+      case 'detail':
+        return renderDetailPage();
+      case 'create':
+        return renderCreatePage();
+      default:
+        return renderLoginPage();
+    }
+  })();
+
+  return (
+    <>
+      {pageContent}
+      {renderUploadModal()}
+    </>
+  );
 }
