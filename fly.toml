@@ -19,6 +19,13 @@ primary_region = 'sin'
   [http_service.http_options]
     idle_timeout = 300
 
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/"
+
 [[vm]]
   size = 'shared-cpu-2x'
   memory = '2048mb'

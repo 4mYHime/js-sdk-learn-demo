@@ -546,8 +546,10 @@ function LoadApp() {
           break;
           
         } else {
-          // 未知状态，退出
+          // 未知状态，标记为error并退出，防止无限重试
           console.warn('订单状态异常，无法继续:', order.status, order.tasks.map(t => `${t.type}:${t.status}`));
+          updateOrderStatus(orderId, 'error', '订单状态异常，无法继续执行。请检查任务数据或重新创建订单。');
+          setCurrentOrder(getOrder(orderId));
           break;
         }
       }
