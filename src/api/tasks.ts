@@ -14,7 +14,11 @@ import {
   ITransferListRequest,
   ITransferListResponse,
   IDeleteFileRequest,
-  IDeleteFileResponse
+  IDeleteFileResponse,
+  IUpdatePreFileRequest,
+  IUpdatePreFileResponse,
+  IEstimatePointsRequest,
+  IEstimatePointsResponse
 } from '../types';
 
 // 任务状态响应类型
@@ -41,7 +45,7 @@ export interface ITaskStatusResponse {
 }
 
 // API Tokens
-const TOKENS = {
+export const TOKENS = {
   script: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbImJLbzZDMlhyZUVVaHV2MlJjZUFjeVdCRVVpRmNTOXZkIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NjkyLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA2MTg2NTE0NzA3MzgyMzE4Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM3MjkxNTQ2OTUxNzM0In0.epCcMf-RdTqZ8r4jW281AkDr_dpqtIHfXn68q3XmZ2r4s8zlCSiB5t-JZDwNTvO4Ao-vGb7nIHFsusxR6o_Qf_c1a0ficIydnRoE9zZk4CIg89UiVPHk-k4PtcCQDp9c_hUT6QUW2Zanx7ZDWf_IZ9-C50O0IlASi4lo53I7flOFpQxHcwCrQy4ikamVk5Hhs4uvqcOzbynNmlGSwlOIi9nYAJ_59y_kywWI8jT1guflrrtv-oCsG91QpslBSMNZY1KSG5Q5Wly4HSJnIirPboc25giAFY0mF37yXwiW1pLvNEQTGdQwD9sZY2NDzXC-CUiDJcEZdbVZE_HJKFeRYw',
   clip: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbInpLNGNRTnFGSGhNZXNMc25HcnU0enBMVWp3MTdwanBxIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NzA2LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA2MTg3MjMwMjgwODEwNTIzIiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM3MzQ5MTAxMTkxMjIyIn0.IFRfn3Q1FZhIhDpwmVtW9whN_s3_96vUsdsi_EopR1eU9Ef-9LLBFZC_gnp1IZF65l9TYnFNoZnHVzItlJOsiX5eT6rSnUjOo_481tvqWCD7wp2CULrwvt_cCld0K1B0ye4vGFOZrHkOFUuYXXHDf80onStoJVLJqnqrSgHWwu3ODbbVoSb8tKBag6nHSgftlpo67jiTuqICQGM0oH7xuw0oFjXAWeddpBzp74KWaADlAOTZjeMVWd6OqCbBS6mb4dlH5BJcXxHSMwyK1rXxm7tNeqmYxKx60bfFHWGX1iie-3e9Se3MBmZnIHPPmGcXgSwsCGWooECtrN3KqJpGzQ',
   video: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIll4dTVoNlFpNGJVSHlXb3FVNHpBSWxRQmdLSkVmOFhQIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NzIwLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA2MTg3NDk1NjYyODEzMjM1Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM3NDExMzQ0NjYyNTYyIn0.S3ZV9ii3RlYtmepzYLcEl6yKtxlu1b3FcRW3Ov2fwCbAKuz48W_SCv0nLE9VDi0xiuzZPmNc8S0Ly0_kRi_YQ-G2zQszQgXwMoNRdqjvZ-Y9oWzG2r3vSwHfn1bA4rwnOjo_EkLlSTpPw7Xva8VLwCTiyCMNjR3EOqPhSTgsES0FnO5q-4piukc21U5Q6rnWPAbDirpYnmLehkdOGSX3p8VQBsdjwyv-fd5f5EvGD_4vDf-5qEJ3rtSM8mO7ENjcli9u3Astk9c6muAIgx7s6gb4ftcuGHSkY8vlTRKHyGr48OKVZbUbLnp6XpzXpvq31Jz9sYhuhZ6mvhNZzTonKQ',
@@ -51,7 +55,12 @@ const TOKENS = {
   pre_upload: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIlQ3TzNZaUUwaDF0NTM1MGc4U0ZubGo5aXBKTU9Dc2lIIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NDQyLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA1NjI1Mzc4NzUyNjkyMjcwIiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM2MjE3NTA3MzMyMTMyIn0.JNs6stiJ7gSGaPF02REVxFVY1gKO5B2RQiywC_7-6uIY7h8fKoR3s8_2hYi1G86Cy94PvPZrO6rLhlwGeA9i_3YHA5bveT59yf39BZcY-dbcS62MRoKdqrWM2X068jgUl2URo-cjr2hlzIZOKqt9HNWjGi078IIfYUR_ARS5fXOTklH92mE_Hcs4EijCc2IODKhSrhY8YFEhiyK_im6gRpJlFK2FMGvt_3j45vo3tGSw1AXbr_9nOb0JRd63gUBhwcD1XV-MF3OUycYxlK4Oy0b-xWXllif5wpKT404DVBzrC3vSxRhImw28rSw79BYNJojPKYaMkkuspxlsYVqVig',
   upload_task: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIlpqTW9FckNKYjY4a0NnWXR4OW9kc3dJb3E4VENmbVdaIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NDY4LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA1NjM1NjAwMjU0NzYzMDM0Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM2MzI4MzM5MjU5Mzk4In0.D38xZHjFS_wQEfyJxcGQi4z4EOlwYdF8JmUBvYOfrCUb2oRLroO0GkBBYtjLKPynVrgPgCLywhuEhpKVB1xBdMEhPDUC2QHafYAf9DlkzVeOQWTtrydS9gFV_ayU4947_2ixgf5igZ9bcLllWRpjEStv0ch32ddZo8oWaIuUded_jVYhR85G6C1ihRZkAT3zogH0eOBpVo5gfWUQy2C9Iem_VVU85BTEmIWu-pJ-GOa5JOI0t18w4oiHIIveVXYVKoxGbKoh0OUB1bqbwxiCifQtfFgX6ZTw4lX8HvXmSKUuOKB26mvzcgTGgg_gPqLtPPUalSpbdeNRrpn_JP6zWA',
   transfer_list: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbImd6Y1FYcVowd0p6UkdEb01nUDZaRlozQVMza0VZQnhyIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NTAwLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA1NjQ0OTA5MTM5MTk3OTkwIiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM2NDYzNjA4MTE5MzMyIn0.P2Kd8kKLLQzmMTUCSP_FTMRDon6j1tasX43I6e8KFKe6fGnBGoXjy7W-jBJbeyyzOY7lqv1f732gs1miSGjQ2RhUxxfE8gzRNYMFszPigEjIj40dacb8Grg71GpRxTJu0AL__exv1sLa94bYg5sULC7FlbfjElG_WmXWwe1EKFTboL5pb_-MKviMTkgew7sexGYOZGSNtEHYPzc0U9llq0bAx7okP9VmHMU2QVuWWyqf6Zs-8VASH8ucv7c6cs4NOFofJ4tAJbw8n7dzctDmmiCZzAHhuNM8X5zuyUOA3etV_ysm5eXdQYRQOgfHvUXmbzK5VSef7UTCXqMWlySV9w',
-  delete_file: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIkRhSjNKN2RIVVNFc3piTENXam50dHd0Zm12UVlWczE0Il0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NDg0LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA1NjQ1NDI1ODI3MTE5MTUwIiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM2Mzk2NjgzODA0Njc4In0.Xq486dBpLcCM1gWYyB3a0yg1zoSXxJJqBxxnlW9Scqkdr0XRLYYI1rg4kLIhvBmCbBN-iHpPnAO4sV68jww29fy33wKceg99nTcEUiCsbmqHTGGp7elFhvBNojXWcy-gIaUz_TO45KryB8RGOfUzMe3TKXeb0EaVgsryOsWzrJED4zgzyqNrTJYXWHVDeHTgea_mQkh3FV4mBCHM2t84_FpBsaLSQ6_ov0CdkKCL5UZRuayDmKHw3d8t1L0TJp5ssDiSgYNjeybrC9p9gfoleROlqR0EEV7TsdpgCZngOiv5mi-gBc6IsxK7w1rojVivW9YkBsJePwlnZWx8WApUjQ'
+  update_pre_file: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIm5ENDFzdHFtdWZiTmRBakdYMnd4ZkFRWHA3WW9GNE1WIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NTEzLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA1NjI5NjM3OTg4NzEyNDg2Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM2NTIwMTM0NzU0MzEzIn0.aOaQt_KoN6T3PoR2MVz21L8mBK7cHgYeIsriGG3TAkxHxFLDL5Izc1i3y_BsOTiNjh7GSMBGbDZkg3LoEu1L6t4AzLYr1FdBWUFzU029l8ZdDmNJRiD61hBShGbZ7NVqYeyLTHzAbrsG6EpeEXIXwpbRiq82shm_kx-rmj3dh5P25s-iGn_Ez2dua99nh14t4DQO9qKMEfcP74poR7CUBIfp4Yv7kZVxhkV2IsA1DfyEWRW51JGzZ74_5zT2UiSbXtbaDUZSW37pm8gVnHDjhce77kffCTA8I0Xlqyelbyg01zLc0s0Gja4HSvmGJh93yFOXzJJULcZHOKzoH5oSWA',
+  delete_file: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIkRhSjNKN2RIVVNFc3piTENXam50dHd0Zm12UVlWczE0Il0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQ1NDg0LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA1NjQ1NDI1ODI3MTE5MTUwIiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzM2Mzk2NjgzODA0Njc4In0.Xq486dBpLcCM1gWYyB3a0yg1zoSXxJJqBxxnlW9Scqkdr0XRLYYI1rg4kLIhvBmCbBN-iHpPnAO4sV68jww29fy33wKceg99nTcEUiCsbmqHTGGp7elFhvBNojXWcy-gIaUz_TO45KryB8RGOfUzMe3TKXeb0EaVgsryOsWzrJED4zgzyqNrTJYXWHVDeHTgea_mQkh3FV4mBCHM2t84_FpBsaLSQ6_ov0CdkKCL5UZRuayDmKHw3d8t1L0TJp5ssDiSgYNjeybrC9p9gfoleROlqR0EEV7TsdpgCZngOiv5mi-gBc6IsxK7w1rojVivW9YkBsJePwlnZWx8WApUjQ',
+  user_balance: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjcwMTQyY2UwLWFiZGQtNDFhMy04Yzk0LWM3NGU5ZGNmNWJiNyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbInZvQkd3azZCcmdHY2hDZnBNYklLRlNkQ0lnUUsxMHp6Il0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzcyMjQyNzg5LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjA1NjIwMDgyODM5OTEyNDk0Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjExNzI0ODIyMjYyODQxMzgwIn0.uxyJe8q0V_o0t163ALtp_411ZQfSzb4_P9PQglLwzk8Av5goAjEWUSa8DhHzSeOroijNzHL8FL5JBHa2Ft9Px5Gs8IWKv2R2dYeVDQ0S7Ll6T8f3vEC5n3EWvp_ciiLRab3vvbAPcNo3M_ObJEkOAy392Zp9lOvC3G3i80DPpzD41fdyhhPGJGB_bxhrSswANyq_N_E4La18ScS-bO3VCAK8EUtHaQurKwILIZXwET9tK-1cC_kUqMF2sZ4JT0qoH_T0C-6uPJo1oFxPxpq61YHt0GAXmZvh1dcgG_XYaOXKRpoaG-cz4zn6brNWhQ2ZVLUGsfk9eGZiXcamdZp-pQ',
+  estimate_points: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjI3ZjhiZGYzLWM0YTQtNDU3Zi04YmFjLTE2OWFmZTZiOTAyNCJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIlgzblo3bjlvU1o4WURES1E5cnU5YTd3aGZvRm1NNE03Il0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzczNjgyODAxLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjE3OTA1NTkxMDkxOTg2NDg0Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjE3OTA5NjI2MDc5NTQzMzA2In0.W_EpBPXdkuh4PPdZmoRX9Fyui0N_CMTB5vuX8i9GcRek5HNzPiXsW43JOE9CGzcycVmRIjsiPK7qJgo-ufzLrr3holoS9aD5ifq2PS_UlYXPaCUADwZ5IZqHvHeFP7FDvXe3UYVQ_16lZalWKpwSWXUtnVTigWHc8zLsnQBC8s2QCuO87fY-EealhPp9Luo-WsY4VWZ1ajKY7D0tuJmi7OREx-dienk-dgT-QppqrT3JI8WxMRk-QcXV6AgLvPIgewEU3CP86CgqJkT41PXy0s45c-_M0GPWTtCkLsOueQps6vKMMk2IcnEt0M3wUxM-QzfTXqTqvPaYpR4-L9ACCA',
+  cloud_drive_usage: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjI3ZjhiZGYzLWM0YTQtNDU3Zi04YmFjLTE2OWFmZTZiOTAyNCJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIjc1bnJFNFBaSmVMckZoOG1aS2QwTFFuWjNEaldXVkVtIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzczNjY2MDI3LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjE3ODM0Njg0NjI5NjQ3MzYwIiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjE3ODM3NTgxOTAzODU1NjUwIn0.ftvGUr_VMfE5Fxr3VTmMcakWD1N_omYaryk69Gf2EYu-G9Z4bdCcLe5sqkvmEXd8qZUuujU0Cf5cfI7gFvJLRr5yldhBy79CQaagwOIZJgugVuhv7n-YRN2TT-sqOXcRZjerntdTQMbRVQTMZKsAnKT-iVbB24ID53NFCDi_rH9PExbgig_a3L40pT3yQQ0u6ZkKGXn5O6LSvYNXgZSNe4nJIYDxEUNz-4_-ZhSs9TKlUQ9c-h_SXcXD-DxFGFdFar5cqswxkw5uo_vsTycI4Or99ImB_Rre6x3E4e7SLK1_MhdApYnApnMr840Moulff1_8CDX9z5CaLY0Zk9G2Kw',
+  order_api: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjIwOGMwNTVhLWI2OTUtNGZiMi04OTY2LTMzNTFkNmQ4OWE5MyJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIld0eGZvajRqRExnQzExc3h6QTllSWw0QWRHWVE5Q1pCIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzczNjkxODU3LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjE3OTM0MDgzMjAwMzg1MDY0Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjE3OTQ4NTE5ODk0MDg5NzgyIn0.EYbkszKUJ3DblQSryNFogsESCSKSkV_dWIlKr30FYcaGwR_8pRXpA7xg7vyA1eUJbUojeX77UR5c5LHO-nWv7gsyjOr22HBWlEtAiWu1wta_YXY7YuW5vdZ9IZZeHPK5IF6UU_8tUrt4nEwi9Bzl0-CL2lNnQQWTYRw2a6TYJDHiLMhigt53TN7wdz5sHKZ2xlhlcOhFUOT_JQS_rCYKZnA4WlZ_4ruhmkpaNudawJJiLRJCtp0xpK1_gki64CbPfar4IFY_R4lCy0h8xSH_JMXwTIZo2xn1JFcQ7pU_1FBPPCJIDk2Qy9gXZTrKg42ZfE3yxB8b6MiOLyffaSJdHQ'
 };
 
 // 生成解说文案
@@ -116,7 +125,7 @@ export async function fetchCloudFiles(appKey: string, page: number = 1, pageSize
   return response.data;
 }
 
-// 获取云盘文件列表（直接 API）
+// 获取云盘文件列表（通过 Coze 工作流）
 export async function fetchCloudFilesDirect(
   appKey: string,
   options: {
@@ -128,19 +137,26 @@ export async function fetchCloudFilesDirect(
   } = {}
 ): Promise<ICloudFilesDirectResponse> {
   const { page = 1, pageSize = 20, orderBy = '', order = 'desc', search = '' } = options;
-  const params = new URLSearchParams({
+  const response = await axios.post('/api/cloud_files/run', {
+    app_key: appKey,
     page: String(page),
     page_size: String(pageSize),
     order_by: orderBy,
     order: order,
     search: search
-  });
-  const response = await axios.get(`/api/v2/files/list?${params.toString()}`, {
+  }, {
     headers: {
-      'app-key': appKey
+      'Authorization': `Bearer ${TOKENS.cloud_files}`,
+      'Content-Type': 'application/json'
     }
   });
-  return response.data;
+  // Coze 返回 { api_response: { code, message, data: { items, total_pages, page, ... } } }
+  // 兼容 api_response 为 JSON 字符串的情况
+  let apiResponse = response.data.api_response;
+  if (typeof apiResponse === 'string') {
+    try { apiResponse = JSON.parse(apiResponse); } catch (e) { /* ignore */ }
+  }
+  return apiResponse;
 }
 
 // 生成爆款学习模型
@@ -166,11 +182,9 @@ export async function pollTaskUntilComplete(
   }
 ): Promise<ITaskStatusResponse> {
   const intervalMs = options?.intervalMs ?? 10000;
-  const maxAttempts = options?.maxAttempts ?? 360;
   const abortSignal = options?.abortSignal;
-  let attempts = 0;
   
-  while (attempts < maxAttempts) {
+  while (true) {
     // 检查是否被中断
     if (abortSignal?.aborted) {
       throw new Error('轮询已取消');
@@ -197,12 +211,21 @@ export async function pollTaskUntilComplete(
       }
     }
     
+    // 兼容 Coze 返回 api_response 为 JSON 字符串的情况
+    if (typeof status!.api_response === 'string') {
+      try {
+        status!.api_response = JSON.parse(status!.api_response);
+      } catch (e) {
+        console.warn('api_response 解析失败:', e);
+      }
+    }
+    
     if (onProgress) {
       onProgress(status!);
     }
     
     // 任务状态: 0=初始化, 1=进行中, 2=已完成, 3=已失败, 4=已取消
-    const taskStatus = status!.api_response?.data?.status;
+    const taskStatus = Number(status!.api_response?.data?.status);
     if (taskStatus === 2) {
       return status!;
     }
@@ -212,21 +235,19 @@ export async function pollTaskUntilComplete(
     if (taskStatus === 4) {
       throw new Error('任务已取消');
     }
-    
-    attempts++;
+    if (isNaN(taskStatus)) {
+      console.warn('任务状态异常，原始值:', status!.api_response?.data?.status, '完整响应:', JSON.stringify(status!).slice(0, 500));
+    }
     
     // 等待间隔，期间检查abort
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, intervalMs);
-      // 简单的abort检查
       if (abortSignal?.aborted) {
         clearTimeout(timer);
         resolve();
       }
     });
   }
-  
-  throw new Error('任务超时');
 }
 
 // 预转存文件
@@ -262,6 +283,18 @@ export async function fetchTransferList(request: ITransferListRequest): Promise<
   return response.data;
 }
 
+// 更新预转存文件关联（直接调 jieshuo API）
+export async function updatePreFile(request: IUpdatePreFileRequest): Promise<IUpdatePreFileResponse> {
+  const { app_key, ...body } = request;
+  const response = await axios.post('/api/v2/files/upload/pre-transfer/edit', body, {
+    headers: {
+      'app-key': app_key,
+      'Content-Type': 'application/json'
+    }
+  });
+  return response.data;
+}
+
 // 删除文件
 export async function deleteFile(request: IDeleteFileRequest): Promise<IDeleteFileResponse> {
   const response = await axios.post('/api/delete_file/run', request, {
@@ -271,4 +304,57 @@ export async function deleteFile(request: IDeleteFileRequest): Promise<IDeleteFi
     }
   });
   return response.data;
+}
+
+// 获取用户余额
+export async function fetchUserBalance(appKey: string): Promise<any> {
+  const response = await axios.post('/api/user_balance/run', {
+    app_key: appKey
+  }, {
+    headers: {
+      'Authorization': `Bearer ${TOKENS.user_balance}`,
+      'Content-Type': 'application/json'
+    }
+  });
+  // 兼容 balance_data 为 JSON 字符串
+  let balanceData = response.data.balance_data;
+  if (typeof balanceData === 'string') {
+    try { balanceData = JSON.parse(balanceData); } catch (e) { /* ignore */ }
+  }
+  return balanceData;
+}
+
+// 获取云盘用量
+export async function fetchCloudDriveUsage(appKey: string): Promise<any> {
+  const response = await axios.post('/api/cloud_drive_usage/run', {
+    app_key: appKey
+  }, {
+    headers: {
+      'Authorization': `Bearer ${TOKENS.cloud_drive_usage}`,
+      'Content-Type': 'application/json'
+    }
+  });
+  // 优先用顶层字段，否则从 api_response.data 取
+  const data = response.data;
+  return {
+    used_size: data.used_size ?? data.api_response?.data?.used_size ?? 0,
+    max_size: data.max_size ?? data.api_response?.data?.max_size ?? 0,
+    file_count: data.file_count ?? data.api_response?.data?.file_count ?? 0,
+    usage_percentage: data.usage_percentage ?? data.api_response?.data?.usage_percentage ?? 0
+  };
+}
+
+// 预估点数
+export async function estimatePoints(request: IEstimatePointsRequest): Promise<IEstimatePointsResponse> {
+  const response = await axios.post('/api/estimate_points/run', request, {
+    headers: {
+      'Authorization': `Bearer ${TOKENS.estimate_points}`,
+      'Content-Type': 'application/json'
+    }
+  });
+  let apiResponse = response.data?.api_response;
+  if (typeof apiResponse === 'string') {
+    try { apiResponse = JSON.parse(apiResponse); } catch (e) { /* ignore */ }
+  }
+  return apiResponse || response.data;
 }

@@ -274,6 +274,21 @@ export interface IDeleteFileResponse {
   error_message: string;
 }
 
+// 预转存文件更新请求
+export interface IUpdatePreFileRequest {
+  app_key: string;
+  pre_file_id: string;
+  index?: number;
+  related_record_id?: string;
+}
+
+// 预转存文件更新响应
+export interface IUpdatePreFileResponse {
+  code: number;
+  message: string;
+  data: Record<string, any>;
+}
+
 // 工作流状态
 export interface IWorkflowState {
   step: number;
@@ -294,4 +309,27 @@ export interface IWorkflowState {
   clipOrderNum: string | null;
   videoTaskId: string | null;
   videoUrl: string | null;
+}
+
+// 预估点数请求
+export interface IEstimatePointsRequest {
+  app_key: string;
+  request_params: {
+    learning_srt?: string;
+    model_version?: string;
+    learning_model_id?: string;
+    episodes_data: IEpisodeData[];
+  };
+}
+
+// 预估点数响应
+export interface IEstimatePointsResponse {
+  viral_learning_points: number | null;
+  commentary_generation_points: number | null;
+  video_synthesis_points: number | null;
+  refine_srt_gaps_points: number | null;
+  total_consume_points: number;
+  visual_template_points: number | null;
+  template_points: number | null;
+  text_model_points: number | null;
 }

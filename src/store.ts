@@ -1,4 +1,10 @@
 // 订单和任务数据存储模块
+import { apiListOrders, apiSaveOrder, apiDeleteOrder } from './api/orders';
+
+// 后端同步：fire-and-forget，不阻塞前端操作
+function syncToBackend(fn: () => Promise<any>) {
+  fn().catch(err => console.warn('[DB Sync]', err?.message || err));
+}
 
 // 子任务类型
 export type TaskType = 'viral_learn' | 'script' | 'clip' | 'video';
@@ -109,6 +115,7 @@ export function saveOrder(order: IOrder): void {
     orders.unshift(order); // 新订单放在最前面
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
+  syncToBackend(() => apiSaveOrder(order));
 }
 
 // 更新订单状态
@@ -120,7 +127,11 @@ export function updateOrderStatus(orderId: string, status: OrderStatus, errorMes
     if (errorMessage) {
       order.errorMessage = errorMessage;
     }
-    saveOrder(order);
+    const orders = getAllOrders();
+    const index = orders.findIndex(o => o.id === order.id);
+    if (index >= 0) orders[index] = order; else orders.unshift(order);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
+    syncToBackend(() => apiSaveOrder(order));
   }
 }
 
@@ -135,7 +146,11 @@ export function updateOrderTask(orderId: string, task: ITask): void {
       order.tasks.push(task);
     }
     order.updatedAt = Date.now();
-    saveOrder(order);
+    const orders = getAllOrders();
+    const index = orders.findIndex(o => o.id === order.id);
+    if (index >= 0) orders[index] = order; else orders.unshift(order);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
+    syncToBackend(() => apiSaveOrder(order));
   }
 }
 
@@ -146,7 +161,11 @@ export function setOrderVideoUrl(orderId: string, videoUrl: string): void {
     order.videoUrl = videoUrl;
     order.status = 'done';
     order.updatedAt = Date.now();
-    saveOrder(order);
+    const orders = getAllOrders();
+    const index = orders.findIndex(o => o.id === order.id);
+    if (index >= 0) orders[index] = order; else orders.unshift(order);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
+    syncToBackend(() => apiSaveOrder(order));
   }
 }
 
@@ -213,6 +232,59 @@ export function createOrder(params: {
 export function deleteOrder(orderId: string): void {
   const orders = getAllOrders().filter(o => o.id !== orderId);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
+  syncToBackend(() => apiDeleteOrder(orderId));
+}
+
+// 从后端加载订单到localStorage（登录时调用）
+export async function loadOrdersFromBackend(appKey: string): Promise<IOrder[]> {
+  try {
+    const backendOrders = await apiListOrders(appKey);
+    if (Array.isArray(backendOrders) && backendOrders.length > 0) {
+      const localOrders = getAllOrders().filter(o => o.appKey === appKey);
+      const localMap = new Map(localOrders.map(o => [o.id, o]));
+      const backendIds = new Set(backendOrders.map((o: any) => o.id));
+
+      // 智能合并：对于同时存在的订单，选择数据更完整的版本
+      const mergedMap = new Map<string, IOrder>();
+      for (const bo of backendOrders as IOrder[]) {
+        const lo = localMap.get(bo.id);
+        if (lo) {
+          // 本地活跃订单（非终态）且本地tasks更多 → 保留本地版本（避免覆盖正在执行的工作流数据）
+          const localIsActive = lo.status !== 'done' && lo.status !== 'error';
+          const localHasMoreTasks = (lo.tasks?.length || 0) > (bo.tasks?.length || 0);
+          const localIsNewer = lo.updatedAt > bo.updatedAt;
+          if (localIsActive && (localHasMoreTasks || localIsNewer)) {
+            mergedMap.set(bo.id, lo);
+            // 本地更新的版本同步回后端
+            syncToBackend(() => apiSaveOrder(lo));
+          } else {
+            mergedMap.set(bo.id, bo);
+          }
+        } else {
+          mergedMap.set(bo.id, bo);
+        }
+      }
+
+      // 本地独有的订单
+      const localOnly = localOrders.filter(o => !backendIds.has(o.id));
+      for (const lo of localOnly) {
+        mergedMap.set(lo.id, lo);
+        syncToBackend(() => apiSaveOrder(lo));
+      }
+
+      const merged = Array.from(mergedMap.values());
+      // 按创建时间倒序
+      merged.sort((a, b) => b.createdAt - a.createdAt);
+      // 写入localStorage（替换该用户的所有订单）
+      const otherOrders = getAllOrders().filter(o => o.appKey !== appKey);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([...merged, ...otherOrders]));
+      return merged;
+    }
+    return getUserOrders(appKey);
+  } catch (err) {
+    console.warn('[DB Load]', err);
+    return getUserOrders(appKey);
+  }
 }
 
 // 格式化时间

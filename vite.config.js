@@ -88,6 +88,31 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/delete_file/, ''),
       },
+      '/api/update_pre_file': {
+        target: 'https://mj2dzv4fkn.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/update_pre_file/, ''),
+      },
+      '/api/user_balance': {
+        target: 'https://f9cmyyvhjx.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/user_balance/, ''),
+      },
+      '/api/cloud_drive_usage': {
+        target: 'https://ybm8p77ydh.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/cloud_drive_usage/, ''),
+      },
+      '/api/estimate_points': {
+        target: 'https://3y69rshy4q.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/estimate_points/, ''),
+      },
+      '/api/order_api': {
+        target: 'https://9jx9k4wgkx.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/order_api/, ''),
+      },
     },
   }
 })

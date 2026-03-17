@@ -1,17 +1,18 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Steps, Button, Card, List, Avatar, Alert, Select, Input, Spin, Result, Tag, Empty, Radio, message, Tooltip } from 'antd';
-import { IMovie, INarratorTemplate, IBGM, IDubbing, IEpisodeData, ICloudFile, IPreUploadFile, IPreUploadResponse } from './types';
+import { IMovie, INarratorTemplate, IBGM, IDubbing, IEpisodeData, ICloudFile, IPreUploadFile, IPreUploadResponse, IEstimatePointsResponse } from './types';
 import { fetchMovies } from './api/movies';
 import { fetchTemplates } from './api/templates';
 import { fetchBGMList } from './api/bgm';
 import { fetchDubbingList } from './api/dubbing';
-import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete, preUpload, uploadTask, fetchTransferList, deleteFile } from './api/tasks';
+import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete, preUpload, uploadTask, fetchTransferList, deleteFile, updatePreFile, fetchUserBalance, fetchCloudDriveUsage, estimatePoints } from './api/tasks';
 import {
   IOrder, ITask, TaskType, OrderStatus, DeliveryMode,
   getCurrentUser, setCurrentUser, logout,
   getUserOrders, getOrder, createOrder, saveOrder,
   updateOrderStatus, updateOrderTask, setOrderVideoUrl,
+  loadOrdersFromBackend,
   formatTime, formatDuration, getStatusText, getStatusColor
 } from './store';
 import './styles.css';
@@ -70,6 +71,11 @@ function LoadApp() {
   const [viralSrtFilesPage, setViralSrtFilesPage] = useState(1);
   const [viralSrtFilesTotalPages, setViralSrtFilesTotalPages] = useState(1);
   const [selectedViralSrtFile, setSelectedViralSrtFile] = useState<ICloudFile | null>(null);
+  const [viralVideoFiles, setViralVideoFiles] = useState<ICloudFile[]>([]);
+  const [viralVideoFilesLoading, setViralVideoFilesLoading] = useState(false);
+  const [viralVideoFilesPage, setViralVideoFilesPage] = useState(1);
+  const [viralVideoFilesTotalPages, setViralVideoFilesTotalPages] = useState(1);
+  const [selectedViralVideoFile, setSelectedViralVideoFile] = useState<ICloudFile | null>(null);
   const [narratorType, setNarratorType] = useState('movie');
   const [modelVersion, setModelVersion] = useState('standard');
   
@@ -87,12 +93,8 @@ function LoadApp() {
   const [customBgmFilesTotalPages, setCustomBgmFilesTotalPages] = useState(1);
   const [selectedCustomBgmFile, setSelectedCustomBgmFile] = useState<ICloudFile | null>(null);
 
-  // Step 2 (自定义配音): 云盘文件选择
-  const [customDubbingFiles, setCustomDubbingFiles] = useState<ICloudFile[]>([]);
-  const [customDubbingFilesLoading, setCustomDubbingFilesLoading] = useState(false);
-  const [customDubbingFilesPage, setCustomDubbingFilesPage] = useState(1);
-  const [customDubbingFilesTotalPages, setCustomDubbingFilesTotalPages] = useState(1);
-  const [selectedCustomDubbingFile, setSelectedCustomDubbingFile] = useState<ICloudFile | null>(null);
+  // Step 2 (自定义配音): 文本输入
+  const [customDubbingText, setCustomDubbingText] = useState('');
   const [targetPlatform, setTargetPlatform] = useState('抖音短视频平台');
   const [targetCharacterName, setTargetCharacterName] = useState('');
   const [vendorRequirements, setVendorRequirements] = useState('');
@@ -105,7 +107,7 @@ function LoadApp() {
   const [uploadLink, setUploadLink] = useState('');
   const [uploadTag, setUploadTag] = useState('');
   const [uploadTypeTag, setUploadTypeTag] = useState('电影');
-  const [uploadStep, setUploadStep] = useState<'input' | 'preview' | 'uploading' | 'transfers'>('input');
+  const [uploadStep, setUploadStep] = useState<'cloud_drive' | 'input' | 'preview' | 'uploading' | 'transfers'>('cloud_drive');
   const [preUploadLoading, setPreUploadLoading] = useState(false);
   const [preUploadResult, setPreUploadResult] = useState<IPreUploadResponse | null>(null);
   const [preUploadUploadId, setPreUploadUploadId] = useState('');
@@ -115,6 +117,29 @@ function LoadApp() {
   const [transferListTotal, setTransferListTotal] = useState(0);
   const [transferListPage, setTransferListPage] = useState(1);
   const transferPollingRef = useRef<NodeJS.Timeout | null>(null);
+  const [updatingRelationFileId, setUpdatingRelationFileId] = useState<string | null>(null);
+
+  // 我的云盘相关状态
+  const [cloudDriveFiles, setCloudDriveFiles] = useState<ICloudFile[]>([]);
+  const [cloudDriveFilesPage, setCloudDriveFilesPage] = useState(1);
+  const [cloudDriveFilesTotalPages, setCloudDriveFilesTotalPages] = useState(1);
+  const [cloudDriveFilesTotal, setCloudDriveFilesTotal] = useState(0);
+  const [cloudDriveFilesLoading, setCloudDriveFilesLoading] = useState(false);
+  const [cloudDriveSearch, setCloudDriveSearch] = useState('');
+  const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
+
+  // 用户信息 & 云盘用量
+  const [userInfo, setUserInfo] = useState<{ nickname: string; balance: string; mobile: string; company_name: string } | null>(null);
+  const [cloudDriveUsage, setCloudDriveUsage] = useState<{ used_size: number; max_size: number; file_count: number; usage_percentage: number } | null>(null);
+
+  // 预估点数弹窗
+  const [estimateModalVisible, setEstimateModalVisible] = useState(false);
+  const [estimateResult, setEstimateResult] = useState<IEstimatePointsResponse | null>(null);
+  const [estimateLoading, setEstimateLoading] = useState(false);
+  const [estimateError, setEstimateError] = useState('');
+
+  // 刷新订单状态
+  const [refreshingOrders, setRefreshingOrders] = useState(false);
 
   // 音频试听状态
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -229,35 +254,52 @@ function LoadApp() {
     }
   }, [appKey]);
 
-  // 加载自定义 BGM 云盘文件列表
+  // 加载爆款 Video 文件列表（search=mp4，用于自定义模板可选视频）
+  const loadViralVideoFiles = useCallback(async (page: number = 1) => {
+    setViralVideoFilesLoading(true);
+    try {
+      const res = await fetchCloudFilesDirect(appKey, { page, pageSize: 20, search: 'mp4' });
+      setViralVideoFiles(res.data.items);
+      setViralVideoFilesTotalPages(res.data.total_pages);
+      setViralVideoFilesPage(res.data.page);
+    } catch (error) {
+      console.error('加载爆款Video文件失败:', error);
+    } finally {
+      setViralVideoFilesLoading(false);
+    }
+  }, [appKey]);
+
+  // 加载自定义 BGM 云盘文件列表（拉取全部文件后前端筛选音频格式并分页）
+  const [allBgmFiles, setAllBgmFiles] = useState<ICloudFile[]>([]);
+  const BGM_PAGE_SIZE = 20;
   const loadCustomBgmFiles = useCallback(async (page: number = 1) => {
     setCustomBgmFilesLoading(true);
     try {
-      const res = await fetchCloudFilesDirect(appKey, { page, pageSize: 20 });
-      setCustomBgmFiles(res.data.items);
-      setCustomBgmFilesTotalPages(res.data.total_pages);
-      setCustomBgmFilesPage(res.data.page);
+      // 一次拉取足够多的文件，前端筛选音频格式
+      const res = await fetchCloudFilesDirect(appKey, { page: 1, pageSize: 200 });
+      const audioFiles = res.data.items.filter((f: ICloudFile) => ['mp3', 'm4a', 'mav'].includes(f.suffix));
+      setAllBgmFiles(audioFiles);
+      const totalPages = Math.max(1, Math.ceil(audioFiles.length / BGM_PAGE_SIZE));
+      const safePage = Math.min(page, totalPages);
+      setCustomBgmFiles(audioFiles.slice((safePage - 1) * BGM_PAGE_SIZE, safePage * BGM_PAGE_SIZE));
+      setCustomBgmFilesTotalPages(totalPages);
+      setCustomBgmFilesPage(safePage);
     } catch (error) {
       console.error('加载自定义BGM文件失败:', error);
     } finally {
       setCustomBgmFilesLoading(false);
     }
   }, [appKey]);
+  // BGM 前端翻页（不重新请求API）
+  const goToBgmPage = useCallback((page: number) => {
+    const totalPages = Math.max(1, Math.ceil(allBgmFiles.length / BGM_PAGE_SIZE));
+    const safePage = Math.max(1, Math.min(page, totalPages));
+    setCustomBgmFiles(allBgmFiles.slice((safePage - 1) * BGM_PAGE_SIZE, safePage * BGM_PAGE_SIZE));
+    setCustomBgmFilesPage(safePage);
+    setCustomBgmFilesTotalPages(totalPages);
+  }, [allBgmFiles]);
 
-  // 加载自定义配音云盘文件列表
-  const loadCustomDubbingFiles = useCallback(async (page: number = 1) => {
-    setCustomDubbingFilesLoading(true);
-    try {
-      const res = await fetchCloudFilesDirect(appKey, { page, pageSize: 20 });
-      setCustomDubbingFiles(res.data.items);
-      setCustomDubbingFilesTotalPages(res.data.total_pages);
-      setCustomDubbingFilesPage(res.data.page);
-    } catch (error) {
-      console.error('加载自定义配音文件失败:', error);
-    } finally {
-      setCustomDubbingFilesLoading(false);
-    }
-  }, [appKey]);
+  
   
   // 加载BGM和配音
   const loadConfig = useCallback(async () => {
@@ -283,6 +325,14 @@ function LoadApp() {
       setAppKey(savedUser);
       setOrders(getUserOrders(savedUser));
       setPage('orders');
+      // 恢复登录时也加载用户信息
+      fetchUserBalance(savedUser).then(res => {
+        if (res?.data) setUserInfo(res.data);
+      }).catch(() => {});
+      // 从后端加载订单（异步，加载完刷新列表）
+      loadOrdersFromBackend(savedUser).then(orders => {
+        setOrders(orders);
+      });
     }
   }, []);
   
@@ -300,6 +350,14 @@ function LoadApp() {
     setOrders(getUserOrders(appKey));
     setPage('orders');
     setLoginError('');
+    // 加载用户信息
+    fetchUserBalance(appKey).then(res => {
+      if (res?.data) setUserInfo(res.data);
+    }).catch(() => {});
+    // 从后端加载订单（异步，加载完刷新列表）
+    loadOrdersFromBackend(appKey).then(orders => {
+      setOrders(orders);
+    });
   };
   
   // 登出
@@ -310,9 +368,17 @@ function LoadApp() {
     setPage('login');
   };
   
-  // 刷新订单列表
-  const refreshOrders = () => {
-    setOrders(getUserOrders(appKey));
+  // 手动刷新订单状态
+  const refreshOrders = async () => {
+    setRefreshingOrders(true);
+    try {
+      const orders = await loadOrdersFromBackend(appKey);
+      setOrders(orders);
+    } catch {
+      setOrders(getUserOrders(appKey));
+    } finally {
+      setRefreshingOrders(false);
+    }
   };
   
   // 查看订单详情
@@ -392,8 +458,8 @@ function LoadApp() {
             break;
           }
           
-          // 分段式交付：script/clip 完成后暂停，等待用户确认
-          if (order.deliveryMode === 'staged' && (runningTask.type === 'script' || runningTask.type === 'clip')) {
+          // 分段式交付：viral_learn/script/clip 完成后暂停，等待用户确认
+          if (order.deliveryMode === 'staged' && (runningTask.type === 'viral_learn' || runningTask.type === 'script' || runningTask.type === 'clip')) {
             updateOrderTask(orderId, {
               ...latestTask,
               orderNum: orderNum,
@@ -808,8 +874,9 @@ function LoadApp() {
     setSelectedEpisodeVideoFile(null);
     setCustomMovieName('');
     setSelectedViralSrtFile(null);
+    setSelectedViralVideoFile(null);
     setSelectedCustomBgmFile(null);
-    setSelectedCustomDubbingFile(null);
+    setCustomDubbingText('');
     setNarratorType('movie');
     setModelVersion('standard');
     setTaskPhase('idle');
@@ -840,14 +907,18 @@ function LoadApp() {
     }
   }, [currentStep, isCustomMovie, templates.length, episodeSrtFiles.length, bgmList.length, loadTemplates, loadEpisodeSrtFiles, loadConfig]);
   
-  // 执行完整任务流程：创建订单+第一个任务，然后跳转到详情页由resumeOrderWorkflow接管
-  const executeWorkflow = async () => {
+  // 预估点数：点击"开始生成视频"时先调用
+  const handleEstimatePoints = async () => {
     if (!selectedMovie || !selectedBGM || !selectedDubbing || !selectedTemplate) {
       setErrorMessage('请完成所有配置');
       return;
     }
     const _isCustomMovie = selectedMovie.name === '自定义';
     const _isCustomTemplate = selectedTemplate.name === '自定义';
+    if (_isCustomMovie && !customMovieName.trim()) {
+      setErrorMessage('请输入电影名称');
+      return;
+    }
     if (_isCustomMovie && !selectedEpisodeSrtFile) {
       setErrorMessage('请选择视频SRT文件（用于构建剧集数据）');
       return;
@@ -860,8 +931,73 @@ function LoadApp() {
       setErrorMessage('请选择自定义BGM文件');
       return;
     }
-    if (selectedDubbing.name === '自定义' && !selectedCustomDubbingFile) {
-      setErrorMessage('请选择自定义配音文件');
+    if (selectedDubbing.name === '自定义' && !customDubbingText.trim()) {
+      setErrorMessage('请输入自定义配音名称');
+      return;
+    }
+
+    setErrorMessage('');
+    setEstimateLoading(true);
+    setEstimateError('');
+    setEstimateResult(null);
+    setEstimateModalVisible(true);
+
+    const srtOssKey = _isCustomMovie ? (selectedEpisodeSrtFile!.file_id) : selectedMovie.srt_file_id;
+    const videoOssKey = _isCustomMovie ? (selectedEpisodeVideoFile?.file_id || selectedEpisodeSrtFile!.file_id) : selectedMovie.video_file_id;
+
+    const requestParams: any = {
+      episodes_data: [{
+        num: 1,
+        srt_oss_key: srtOssKey,
+        video_oss_key: videoOssKey,
+        negative_oss_key: videoOssKey
+      }],
+      model_version: _isCustomTemplate ? modelVersion : 'standard',
+      ...(_isCustomTemplate
+        ? { learning_srt: selectedViralSrtFile!.file_id }
+        : { learning_model_id: selectedTemplate.learning_model_id })
+    };
+
+    try {
+      const result = await estimatePoints({
+        app_key: appKey,
+        request_params: requestParams
+      });
+      setEstimateResult(result);
+    } catch (err: any) {
+      setEstimateError(err?.message || '预估点数失败，请重试');
+    } finally {
+      setEstimateLoading(false);
+    }
+  };
+
+  // 执行完整任务流程：创建订单+第一个任务，然后跳转到详情页由resumeOrderWorkflow接管
+  const executeWorkflow = async () => {
+    setEstimateModalVisible(false);
+    if (!selectedMovie || !selectedBGM || !selectedDubbing || !selectedTemplate) {
+      setErrorMessage('请完成所有配置');
+      return;
+    }
+    const _isCustomMovie = selectedMovie.name === '自定义';
+    const _isCustomTemplate = selectedTemplate.name === '自定义';
+    if (_isCustomMovie && !customMovieName.trim()) {
+      setErrorMessage('请输入电影名称');
+      return;
+    }
+    if (_isCustomMovie && !selectedEpisodeSrtFile) {
+      setErrorMessage('请选择视频SRT文件（用于构建剧集数据）');
+      return;
+    }
+    if (_isCustomTemplate && !selectedViralSrtFile) {
+      setErrorMessage('请选择爆款SRT文件（用于生成学习模型）');
+      return;
+    }
+    if (selectedBGM.name === '自定义' && !selectedCustomBgmFile) {
+      setErrorMessage('请选择自定义BGM文件');
+      return;
+    }
+    if (selectedDubbing.name === '自定义' && !customDubbingText.trim()) {
+      setErrorMessage('请输入自定义配音名称');
       return;
     }
     
@@ -886,8 +1022,8 @@ function LoadApp() {
         templateSource: _isCustomTemplate ? 'generate' : 'existing',
         bgmId: selectedBGM.name === '自定义' ? (selectedCustomBgmFile?.file_id || '') : selectedBGM.bgm_file_id,
         bgmName: selectedBGM.name === '自定义' ? (selectedCustomBgmFile?.file_name || '自定义') : selectedBGM.name,
-        dubbingId: selectedDubbing.name === '自定义' ? (selectedCustomDubbingFile?.file_id || '') : selectedDubbing.dubbing_id,
-        dubbingName: selectedDubbing.name === '自定义' ? (selectedCustomDubbingFile?.file_name || '自定义') : selectedDubbing.name,
+        dubbingId: selectedDubbing.name === '自定义' ? customDubbingText.trim() : selectedDubbing.dubbing_id,
+        dubbingName: selectedDubbing.name === '自定义' ? customDubbingText.trim() : selectedDubbing.name,
         targetPlatform: targetPlatform,
         targetCharacterName: targetCharacterName || selectedMovie.character_name || '主角',
         vendorRequirements: vendorRequirements || `投放在${targetPlatform}，吸引18-35岁的年轻用户观看。`,
@@ -908,6 +1044,7 @@ function LoadApp() {
         const viralResponse = await generateViralModel({
           app_key: appKey,
           video_srt_path: selectedViralSrtFile!.file_id,
+          ...(selectedViralVideoFile ? { video_path: selectedViralVideoFile.file_id } : {}),
           narrator_type: narratorType,
           model_version: modelVersion
         });
@@ -968,7 +1105,7 @@ function LoadApp() {
       
       // 跳转到订单详情页，由resumeOrderWorkflow接管后续流程
       setCurrentOrder(getOrder(order.id));
-      refreshOrders();
+      setOrders(getUserOrders(appKey)); // 仅从localStorage刷新，避免后端异步覆盖
       setPage('detail');
       
     } catch (error: any) {
@@ -999,8 +1136,9 @@ function LoadApp() {
     setSelectedEpisodeVideoFile(null);
     setCustomMovieName('');
     setSelectedViralSrtFile(null);
+    setSelectedViralVideoFile(null);
     setSelectedCustomBgmFile(null);
-    setSelectedCustomDubbingFile(null);
+    setCustomDubbingText('');
     setNarratorType('movie');
     setModelVersion('standard');
     setTaskPhase('idle');
@@ -1008,6 +1146,50 @@ function LoadApp() {
     setErrorMessage('');
   };
   
+  // 我的云盘：加载文件列表
+  const loadCloudDriveFiles = useCallback(async (page: number = 1, search: string = '') => {
+    setCloudDriveFilesLoading(true);
+    try {
+      const res = await fetchCloudFilesDirect(appKey, { page, pageSize: 20, search });
+      setCloudDriveFiles(res.data.items);
+      setCloudDriveFilesPage(res.data.page);
+      setCloudDriveFilesTotalPages(res.data.total_pages);
+      setCloudDriveFilesTotal(res.data.total);
+    } catch (error) {
+      console.error('加载云盘文件失败:', error);
+    } finally {
+      setCloudDriveFilesLoading(false);
+    }
+  }, [appKey]);
+
+  // 我的云盘：打开弹窗
+  const openCloudDriveModal = () => {
+    setUploadStep('cloud_drive');
+    setCloudDriveSearch('');
+    setUploadModalVisible(true);
+    loadCloudDriveFiles(1, '');
+    // 加载云盘用量
+    fetchCloudDriveUsage(appKey).then(res => setCloudDriveUsage(res)).catch(() => {});
+  };
+
+  // 我的云盘：删除文件
+  const handleCloudDriveDelete = async (fileId: string) => {
+    setDeletingFileId(fileId);
+    try {
+      const res = await deleteFile({ file_id: fileId, app_key: appKey });
+      if (res.success) {
+        message.success('删除成功');
+        loadCloudDriveFiles(cloudDriveFilesPage, cloudDriveSearch);
+      } else {
+        message.error(res.error_message || '删除失败');
+      }
+    } catch (error: any) {
+      message.error('删除失败: ' + error.message);
+    } finally {
+      setDeletingFileId(null);
+    }
+  };
+
   // 上传文件：打开弹窗
   const openUploadModal = () => {
     setUploadLink('');
@@ -1093,12 +1275,157 @@ function LoadApp() {
     }
   };
 
+  // 更新预转存文件关联关系（双向同步）
+  const handleUpdateRelation = async (
+    sourceFile: IPreUploadFile,
+    targetFile: IPreUploadFile | null,
+    sourceType: 'video' | 'subtitle'
+  ) => {
+    if (!preUploadResult) return;
+    setUpdatingRelationFileId(sourceFile.pre_file_id);
+    try {
+      // 1) 更新源文件的关联
+      await updatePreFile({
+        app_key: appKey,
+        pre_file_id: sourceFile.pre_file_id,
+        index: sourceFile.index,
+        related_record_id: targetFile ? String(targetFile.id) : undefined,
+      });
+      // 2) 双向同步：更新目标文件的关联指向源文件
+      if (targetFile) {
+        await updatePreFile({
+          app_key: appKey,
+          pre_file_id: targetFile.pre_file_id,
+          index: targetFile.index,
+          related_record_id: String(sourceFile.id),
+        });
+      }
+      // 3) 更新本地状态
+      const srcId = sourceFile.pre_file_id;
+      const tgtId = targetFile?.pre_file_id;
+      const updateFiles = (files: IPreUploadFile[]) =>
+        files.map(f => {
+          if (f.pre_file_id === srcId) {
+            return { ...f, related_record_id: targetFile ? String(targetFile.id) : null, related_record_name: targetFile?.file_name || null };
+          }
+          if (tgtId && f.pre_file_id === tgtId) {
+            return { ...f, related_record_id: String(sourceFile.id), related_record_name: sourceFile.file_name };
+          }
+          return f;
+        });
+      setPreUploadResult({
+        ...preUploadResult,
+        data: {
+          ...preUploadResult.data,
+          video: updateFiles(preUploadResult.data.video),
+          subtitle: updateFiles(preUploadResult.data.subtitle),
+          image: preUploadResult.data.image,
+          other: preUploadResult.data.other,
+        }
+      });
+      message.success('关联已更新');
+    } catch (error: any) {
+      message.error('更新关联失败: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setUpdatingRelationFileId(null);
+    }
+  };
+
   // 格式化文件大小
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return bytes + 'B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB';
     if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + 'MB';
     return (bytes / 1024 / 1024 / 1024).toFixed(2) + 'GB';
+  };
+
+  // 渲染预估点数弹窗
+  const renderEstimateModal = () => {
+    if (!estimateModalVisible) return null;
+    return (
+      <div className="estimate-overlay" onClick={() => { if (!estimateLoading) setEstimateModalVisible(false); }}>
+        <div className="estimate-modal" onClick={(e) => e.stopPropagation()}>
+          {!estimateLoading && (
+            <button className="estimate-close-btn" onClick={() => setEstimateModalVisible(false)}>✕</button>
+          )}
+          <div className="estimate-header">
+            <div className="estimate-header-icon">💰</div>
+            <div className="estimate-header-title">预估消耗点数</div>
+            <div className="estimate-header-subtitle">以下为本次订单预估消耗，实际消耗以执行结果为准</div>
+          </div>
+
+          {estimateLoading && (
+            <div className="estimate-loading">
+              <Spin size="large" />
+              <div className="estimate-loading-text">正在计算预估点数...</div>
+            </div>
+          )}
+
+          {estimateError && (
+            <div style={{ padding: '16px 0' }}>
+              <Alert type="error" message="预估失败" description={estimateError} style={{ marginBottom: 16, borderRadius: 10 }} />
+              <div style={{ display: 'flex', gap: 10 }}>
+                <Button block onClick={() => setEstimateModalVisible(false)}>关闭</Button>
+                <Button block type="primary" className="btn-primary-gradient" onClick={handleEstimatePoints}>重试</Button>
+              </div>
+            </div>
+          )}
+
+          {estimateResult && !estimateLoading && !estimateError && (
+            <>
+              <div className="estimate-detail-list">
+                {estimateResult.viral_learning_points != null && estimateResult.viral_learning_points > 0 && (
+                  <div className="estimate-detail-row">
+                    <span className="estimate-detail-label"><span className="estimate-icon">🧠</span>爆款模型学习</span>
+                    <span className="estimate-detail-value">{estimateResult.viral_learning_points}<small> 点</small></span>
+                  </div>
+                )}
+                {estimateResult.commentary_generation_points != null && estimateResult.commentary_generation_points > 0 && (
+                  <div className="estimate-detail-row">
+                    <span className="estimate-detail-label"><span className="estimate-icon">📝</span>文案生成</span>
+                    <span className="estimate-detail-value">{estimateResult.commentary_generation_points}<small> 点</small></span>
+                  </div>
+                )}
+                {estimateResult.video_synthesis_points != null && estimateResult.video_synthesis_points > 0 && (
+                  <div className="estimate-detail-row">
+                    <span className="estimate-detail-label"><span className="estimate-icon">🎬</span>视频合成</span>
+                    <span className="estimate-detail-value">{estimateResult.video_synthesis_points}<small> 点</small></span>
+                  </div>
+                )}
+                {estimateResult.refine_srt_gaps_points != null && estimateResult.refine_srt_gaps_points > 0 && (
+                  <div className="estimate-detail-row">
+                    <span className="estimate-detail-label"><span className="estimate-icon">🔍</span>AI场景洞察</span>
+                    <span className="estimate-detail-value">{estimateResult.refine_srt_gaps_points}<small> 点</small></span>
+                  </div>
+                )}
+                {estimateResult.text_model_points != null && estimateResult.text_model_points > 0 && (
+                  <div className="estimate-detail-row">
+                    <span className="estimate-detail-label"><span className="estimate-icon">📄</span>文本模型</span>
+                    <span className="estimate-detail-value">{estimateResult.text_model_points}<small> 点</small></span>
+                  </div>
+                )}
+              </div>
+
+              <div className="estimate-total-row">
+                <span className="estimate-total-label">预估总消耗</span>
+                <span className="estimate-total-value">{estimateResult.total_consume_points}<small> 点</small></span>
+              </div>
+
+              {userInfo && (
+                <div className="estimate-balance-hint">
+                  当前余额: <strong>{userInfo.balance}</strong> 点
+                </div>
+              )}
+
+              <div className="estimate-actions">
+                <button className="estimate-btn estimate-btn-cancel" onClick={() => setEstimateModalVisible(false)}>取消</button>
+                <button className="estimate-btn estimate-btn-confirm" onClick={executeWorkflow}>确认并开始</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
   };
 
   // 渲染上传弹窗
@@ -1108,9 +1435,108 @@ function LoadApp() {
       <div className="upload-modal-overlay" onClick={closeUploadModal}>
         <div className="upload-modal" onClick={(e) => e.stopPropagation()}>
           <div className="upload-modal-header">
-            <h3>{uploadStep === 'transfers' ? '📋 文件传输列表' : '📤 上传文件到云盘'}</h3>
+            <h3>{uploadStep === 'cloud_drive' ? '📁 我的云盘' : uploadStep === 'transfers' ? '📋 文件传输列表' : '📤 上传文件到云盘'}</h3>
             <Button type="text" onClick={closeUploadModal}>✕</Button>
           </div>
+
+          {uploadStep === 'cloud_drive' && (
+            <div className="upload-modal-body">
+              {/* 操作栏 */}
+              <div className="cloud-drive-toolbar">
+                <Input.Search
+                  placeholder="搜索文件名..."
+                  value={cloudDriveSearch}
+                  onChange={(e) => setCloudDriveSearch(e.target.value)}
+                  onSearch={(v) => loadCloudDriveFiles(1, v)}
+                  allowClear
+                  style={{ flex: 1 }}
+                />
+                <Button type="primary" className="btn-primary-gradient" onClick={() => { setUploadLink(''); setUploadTag(''); setUploadTypeTag('电影'); setUploadStep('input'); setPreUploadResult(null); setPreUploadUploadId(''); }}>
+                  📤 上传文件
+                </Button>
+              </div>
+              {/* 云盘用量 */}
+              {cloudDriveUsage && (
+                <div className="cloud-drive-usage-card">
+                  <div className="cloud-drive-usage-header">
+                    <span>☁️ 云盘空间</span>
+                    <span className="cloud-drive-usage-text">
+                      {(cloudDriveUsage.used_size / 1024 / 1024).toFixed(1)} MB / {(cloudDriveUsage.max_size / 1024 / 1024 / 1024).toFixed(1)} GB
+                    </span>
+                  </div>
+                  <div className="cloud-drive-progress-bar">
+                    <div
+                      className="cloud-drive-progress-fill"
+                      style={{ width: `${Math.min(cloudDriveUsage.usage_percentage, 100)}%` }}
+                    />
+                  </div>
+                  <div className="cloud-drive-usage-footer">
+                    <span>{cloudDriveUsage.file_count} 个文件</span>
+                    <span>已用 {cloudDriveUsage.usage_percentage}%</span>
+                  </div>
+                </div>
+              )}
+              {/* 信息栏 */}
+              <div className="cloud-drive-info-bar">
+                <span>共 <strong>{cloudDriveFilesTotal}</strong> 个文件</span>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <Button size="small" type="link" onClick={() => { setUploadStep('transfers'); loadTransferList(1); }}>
+                    📋 传输列表
+                  </Button>
+                  <Button size="small" type="link" onClick={() => loadCloudDriveFiles(cloudDriveFilesPage, cloudDriveSearch)} loading={cloudDriveFilesLoading}>
+                    🔄 刷新
+                  </Button>
+                </div>
+              </div>
+              {/* 文件列表 */}
+              {cloudDriveFilesLoading ? (
+                <div style={{ textAlign: 'center', padding: 40 }}><Spin tip="加载中..." /></div>
+              ) : cloudDriveFiles.length === 0 ? (
+                <Empty description="暂无文件" style={{ padding: '30px 0' }} />
+              ) : (
+                <div className="cloud-drive-file-list">
+                  {cloudDriveFiles.map((file: ICloudFile) => {
+                    const sizeMB = file.file_size / 1024 / 1024;
+                    const sizeStr = sizeMB >= 1024 ? (sizeMB / 1024).toFixed(2) + ' GB' : sizeMB >= 1 ? sizeMB.toFixed(1) + ' MB' : (file.file_size / 1024).toFixed(0) + ' KB';
+                    const suffixColorMap: Record<string, string> = { mp4: 'purple', srt: 'cyan', mp3: 'green', m4a: 'green', mav: 'green', jpg: 'orange', jpeg: 'orange', png: 'orange', gif: 'orange' };
+                    return (
+                      <div key={file.file_id} className="cloud-drive-file-item">
+                        <div className="cloud-drive-file-icon">
+                          {['mp4', 'avi', 'mkv', 'mov'].includes(file.suffix) ? '🎬' : ['mp3', 'm4a', 'mav', 'wav'].includes(file.suffix) ? '🎵' : ['srt', 'ass', 'txt'].includes(file.suffix) ? '📝' : ['jpg', 'jpeg', 'png', 'gif', 'bmp'].includes(file.suffix) ? '🖼️' : '📄'}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="cloud-drive-file-name" title={file.file_name}>{file.file_name}</div>
+                          <div className="cloud-drive-file-meta">
+                            <span>{sizeStr}</span>
+                            <Tag color={suffixColorMap[file.suffix] || 'default'} style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>{file.suffix}</Tag>
+                            <span>{file.created_at}</span>
+                          </div>
+                        </div>
+                        <Button
+                          size="small"
+                          danger
+                          type="text"
+                          loading={deletingFileId === file.file_id}
+                          onClick={() => handleCloudDriveDelete(file.file_id)}
+                          style={{ fontSize: 12 }}
+                        >
+                          删除
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {/* 分页 */}
+              {cloudDriveFilesTotalPages > 1 && (
+                <div className="cloud-drive-pagination">
+                  <Button size="small" disabled={cloudDriveFilesPage <= 1} onClick={() => loadCloudDriveFiles(cloudDriveFilesPage - 1, cloudDriveSearch)}>上一页</Button>
+                  <span style={{ fontSize: 12, color: '#666' }}>{cloudDriveFilesPage} / {cloudDriveFilesTotalPages}</span>
+                  <Button size="small" disabled={cloudDriveFilesPage >= cloudDriveFilesTotalPages} onClick={() => loadCloudDriveFiles(cloudDriveFilesPage + 1, cloudDriveSearch)}>下一页</Button>
+                </div>
+              )}
+            </div>
+          )}
 
           {uploadStep === 'input' && (
             <div className="upload-modal-body">
@@ -1130,9 +1556,12 @@ function LoadApp() {
                   <Select.Option value="图片">图片</Select.Option>
                 </Select>
               </div>
-              <Button type="primary" block className="btn-primary-gradient" loading={preUploadLoading} onClick={handlePreUpload}>
-                解析文件
-              </Button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Button style={{ flex: 1 }} onClick={() => { setUploadStep('cloud_drive'); loadCloudDriveFiles(1, ''); }}>返回云盘</Button>
+                <Button type="primary" className="btn-primary-gradient" style={{ flex: 1 }} loading={preUploadLoading} onClick={handlePreUpload}>
+                  解析文件
+                </Button>
+              </div>
             </div>
           )}
 
@@ -1148,7 +1577,30 @@ function LoadApp() {
                         {formatFileSize(f.file_size)}
                         {f.name_tag && <Tag color="blue" style={{ marginLeft: 4 }}>{f.name_tag}</Tag>}
                         <Tag color="green" style={{ marginLeft: 4 }}>EP{f.index}</Tag>
-                        {f.related_record_name ? <Tag color="purple" style={{ marginLeft: 4 }}>关联: {f.related_record_name}</Tag> : <span style={{ color: '#fa8c16', marginLeft: 4 }}>✕ 未关联</span>}
+                      </div>
+                      <div className="pre-upload-file-relation">
+                        <span style={{ fontSize: 11, color: '#666', marginRight: 4 }}>关联字幕:</span>
+                        <Select
+                          size="small"
+                          style={{ flex: 1, minWidth: 0 }}
+                          value={f.related_record_id ? String(f.related_record_id) : undefined}
+                          placeholder="选择字幕文件"
+                          allowClear
+                          loading={updatingRelationFileId === f.pre_file_id}
+                          disabled={updatingRelationFileId === f.pre_file_id}
+                          onChange={(val) => {
+                            if (val) {
+                              const target = preUploadResult.data.subtitle.find(s => String(s.id) === val) || null;
+                              handleUpdateRelation(f, target, 'video');
+                            } else {
+                              handleUpdateRelation(f, null, 'video');
+                            }
+                          }}
+                        >
+                          {preUploadResult.data.subtitle.map((s: IPreUploadFile) => (
+                            <Select.Option key={s.id} value={String(s.id)}>{s.file_name}</Select.Option>
+                          ))}
+                        </Select>
                       </div>
                       {f.invalid_message && <div className="pre-upload-file-warn">{f.invalid_message}</div>}
                     </div>
@@ -1164,7 +1616,30 @@ function LoadApp() {
                       <div className="pre-upload-file-meta">
                         {formatFileSize(f.file_size)}
                         <Tag color="green" style={{ marginLeft: 4 }}>EP{f.index}</Tag>
-                        {f.related_record_name ? <Tag color="purple" style={{ marginLeft: 4 }}>关联: {f.related_record_name}</Tag> : <span style={{ color: '#fa8c16', marginLeft: 4 }}>✕ 未关联</span>}
+                      </div>
+                      <div className="pre-upload-file-relation">
+                        <span style={{ fontSize: 11, color: '#666', marginRight: 4 }}>关联视频:</span>
+                        <Select
+                          size="small"
+                          style={{ flex: 1, minWidth: 0 }}
+                          value={f.related_record_id ? String(f.related_record_id) : undefined}
+                          placeholder="选择视频文件"
+                          allowClear
+                          loading={updatingRelationFileId === f.pre_file_id}
+                          disabled={updatingRelationFileId === f.pre_file_id}
+                          onChange={(val) => {
+                            if (val) {
+                              const target = preUploadResult.data.video.find(v => String(v.id) === val) || null;
+                              handleUpdateRelation(f, target, 'subtitle');
+                            } else {
+                              handleUpdateRelation(f, null, 'subtitle');
+                            }
+                          }}
+                        >
+                          {preUploadResult.data.video.map((v: IPreUploadFile) => (
+                            <Select.Option key={v.id} value={String(v.id)}>{v.file_name}</Select.Option>
+                          ))}
+                        </Select>
                       </div>
                       {f.invalid_message && <div className="pre-upload-file-warn">{f.invalid_message}</div>}
                     </div>
@@ -1255,7 +1730,7 @@ function LoadApp() {
                 </>
               )}
               <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-                <Button onClick={() => setUploadStep('input')} style={{ flex: 1 }}>继续上传</Button>
+                <Button onClick={() => { setUploadStep('cloud_drive'); loadCloudDriveFiles(1, ''); }} style={{ flex: 1 }}>返回云盘</Button>
                 <Button type="primary" onClick={closeUploadModal} style={{ flex: 1 }}>关闭</Button>
               </div>
             </div>
@@ -1303,7 +1778,7 @@ function LoadApp() {
             {isCustomMovie && (
               <div className="cloud-file-section">
                 <div className="form-group" style={{ marginBottom: 12 }}>
-                  <label className="form-label">电影名称 <span style={{ color: '#999' }}>选填</span></label>
+                  <label className="form-label">电影名称 <span style={{ color: '#ff4d4f' }}>*必填</span></label>
                   <Input placeholder="请输入电影名称" value={customMovieName} onChange={(e) => setCustomMovieName(e.target.value)} />
                 </div>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -1465,11 +1940,11 @@ function LoadApp() {
         const customTemplateOption = { id: -1, name: '自定义', learning_model_id: '', img: null, info: '', remark: null, code: null, type: '', narrator_type: null, name_time: '', time: null, language: null, tags: null, like: null, share: null, messages: null, stars: null, profit: null, slug_img: null, link: null } as INarratorTemplate;
         // 根据 narratorType + modelVersion 计算 type_value
         const typeValueMap: Record<string, number> = {
-          'movie_advanced': 1, 'movie_standard': 11,
-          'first_person_movie_advanced': 2, 'first_person_movie_standard': 22,
-          'multilingual_advanced': 3, 'multilingual_standard': 33,
-          'first_person_multilingual_advanced': 4, 'first_person_multilingual_standard': 44,
-          'short_drama_advanced': 5, 'short_drama_standard': 55,
+          'movie_standard': 11,
+          'first_person_movie_standard': 22,
+          'multilingual_standard': 33,
+          'first_person_multilingual_standard': 44,
+          'short_drama_standard': 55,
         };
         const typeValue = String(typeValueMap[`${narratorType}_${modelVersion}`] ?? 11);
         const filteredTemplates = templates.filter(t => t.type === typeValue);
@@ -1495,7 +1970,6 @@ function LoadApp() {
                 <label className="form-label">模型版本</label>
                 <Select style={{ width: '100%' }} value={modelVersion} onChange={(v) => { setModelVersion(v); setSelectedTemplate(null); }}
                   options={[
-                    { label: '高级版 (advanced)', value: 'advanced' },
                     { label: '标准版 (standard)', value: 'standard' }
                   ]}
                 />
@@ -1510,7 +1984,7 @@ function LoadApp() {
                   <div
                     key={template.id}
                     className={`select-card ${selectedTemplate?.id === template.id ? 'selected' : ''}`}
-                    onClick={() => { setSelectedTemplate(template); if (template.name === '自定义' && viralSrtFiles.length === 0) loadViralSrtFiles(); }}
+                    onClick={() => { setSelectedTemplate(template); if (template.name === '自定义') { if (viralSrtFiles.length === 0) loadViralSrtFiles(); if (viralVideoFiles.length === 0) loadViralVideoFiles(); } }}
                   >
                     {template.img ? (
                       <img className="select-card-cover" src={template.img} alt={template.name}
@@ -1599,6 +2073,65 @@ function LoadApp() {
                   </>
                 )}
 
+                {/* 爆款视频文件（可选） */}
+                <div style={{ marginTop: 14, marginBottom: 10 }}>
+                  <label className="form-label" style={{ fontSize: 11, marginBottom: 4 }}>
+                    已选爆款视频 <span style={{ color: '#999' }}>可选</span>
+                  </label>
+                  {selectedViralVideoFile ? (
+                    <Tag color="purple" closable onClose={() => setSelectedViralVideoFile(null)} title={selectedViralVideoFile.file_name}
+                      style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer' }}
+                      onClick={() => { navigator.clipboard.writeText(selectedViralVideoFile.file_name); message.success('文件名已复制'); }}>
+                      {selectedViralVideoFile.file_name}
+                    </Tag>
+                  ) : (
+                    <Tag color="default">未选择</Tag>
+                  )}
+                </div>
+
+                <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>爆款视频文件列表</label>
+                  <Button size="small" onClick={() => loadViralVideoFiles(viralVideoFilesPage)} loading={viralVideoFilesLoading}>刷新</Button>
+                </div>
+                {viralVideoFilesLoading ? (
+                  <Spin tip="加载爆款视频文件..." />
+                ) : (
+                  <>
+                    <List
+                      size="small"
+                      dataSource={viralVideoFiles}
+                      renderItem={(file: ICloudFile) => {
+                        const isSelected = selectedViralVideoFile?.file_id === file.file_id;
+                        return (
+                          <Card size="small" style={{ marginBottom: 4, background: isSelected ? '#f9f0ff' : '#fff' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div title={file.file_name} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {file.file_name}
+                                </div>
+                                <div style={{ fontSize: 10, color: '#999' }}>
+                                  {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
+                                </div>
+                              </div>
+                              <Button size="small" type={isSelected ? 'primary' : 'default'} style={{ marginLeft: 8 }}
+                                onClick={() => setSelectedViralVideoFile(isSelected ? null : file)}>
+                                {isSelected ? '已选择' : '选择'}
+                              </Button>
+                            </div>
+                          </Card>
+                        );
+                      }}
+                    />
+                    {viralVideoFilesTotalPages > 1 && (
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
+                        <Button size="small" disabled={viralVideoFilesPage <= 1} onClick={() => loadViralVideoFiles(viralVideoFilesPage - 1)}>上一页</Button>
+                        <span style={{ fontSize: 12, lineHeight: '24px' }}>{viralVideoFilesPage}/{viralVideoFilesTotalPages}</span>
+                        <Button size="small" disabled={viralVideoFilesPage >= viralVideoFilesTotalPages} onClick={() => loadViralVideoFiles(viralVideoFilesPage + 1)}>下一页</Button>
+                      </div>
+                    )}
+                  </>
+                )}
+
               </div>
             )}
           </div>
@@ -1673,7 +2206,7 @@ function LoadApp() {
                       <div 
                         className={`audio-card ${selectedBGM?.id === -1 ? 'audio-card-selected' : ''}`}
                         onClick={() => {
-                          setSelectedBGM({ id: -1, name: 'no_bgm', bgm_file_id: 'no_bgm', status: null, remark: null, bgm_demo_url: '', type: null, tag: null, description: null } as IBGM);
+                          setSelectedBGM({ id: -1, name: 'NO_BGM', bgm_file_id: 'NO_BGM', status: null, remark: null, bgm_demo_url: '', type: null, tag: null, description: null } as IBGM);
                           setSelectedCustomBgmFile(null);
                           setBgmListExpanded(false);
                         }}
@@ -1787,9 +2320,9 @@ function LoadApp() {
                         />
                         {customBgmFilesTotalPages > 1 && (
                           <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
-                            <Button size="small" disabled={customBgmFilesPage <= 1} onClick={() => loadCustomBgmFiles(customBgmFilesPage - 1)}>上一页</Button>
+                            <Button size="small" disabled={customBgmFilesPage <= 1} onClick={() => goToBgmPage(customBgmFilesPage - 1)}>上一页</Button>
                             <span style={{ fontSize: 12, lineHeight: '24px' }}>{customBgmFilesPage}/{customBgmFilesTotalPages}</span>
-                            <Button size="small" disabled={customBgmFilesPage >= customBgmFilesTotalPages} onClick={() => loadCustomBgmFiles(customBgmFilesPage + 1)}>下一页</Button>
+                            <Button size="small" disabled={customBgmFilesPage >= customBgmFilesTotalPages} onClick={() => goToBgmPage(customBgmFilesPage + 1)}>下一页</Button>
                           </div>
                         )}
                       </>
@@ -1817,9 +2350,9 @@ function LoadApp() {
                         </div>
                         <div className="audio-card-check">✓</div>
                       </div>
-                      {selectedDubbing.name === '自定义' && selectedCustomDubbingFile && (
+                      {selectedDubbing.name === '自定义' && customDubbingText && (
                         <div style={{ marginTop: 6, fontSize: 12, color: '#666' }}>
-                          已选文件：<Tag color="blue" style={{ fontSize: 11 }}>{selectedCustomDubbingFile.file_name}</Tag>
+                          配音名称：<Tag color="blue" style={{ fontSize: 11 }}>{customDubbingText}</Tag>
                         </div>
                       )}
                     </div>
@@ -1834,8 +2367,8 @@ function LoadApp() {
                             className={`audio-card ${isSelected ? 'audio-card-selected' : ''}`}
                             onClick={() => {
                               setSelectedDubbing(dub);
-                              setSelectedCustomDubbingFile(null);
-                              if (dub.name === '自定义') { loadCustomDubbingFiles(); } else { setDubbingListExpanded(false); }
+                              setCustomDubbingText('');
+                              if (dub.name !== '自定义') { setDubbingListExpanded(false); }
                             }}
                           >
                             <div className="audio-card-icon">🎙️</div>
@@ -1868,66 +2401,16 @@ function LoadApp() {
                 </div>
 
                 {selectedDubbing?.name === '自定义' && dubbingListExpanded && (
-                  <div className="cloud-file-section" style={{ marginBottom: 12 }}>
-                    <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <label className="form-label" style={{ fontSize: 11, marginBottom: 0 }}>
-                        已选配音文件 <span style={{ color: '#ff4d4f' }}>*必需</span>
-                      </label>
-                    </div>
-                    {selectedCustomDubbingFile ? (
-                      <Tag color="blue" closable onClose={() => setSelectedCustomDubbingFile(null)} title={selectedCustomDubbingFile.file_name}
-                        style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer', marginBottom: 6 }}
-                        onClick={() => { navigator.clipboard.writeText(selectedCustomDubbingFile.file_name); message.success('文件名已复制'); }}>
-                        {selectedCustomDubbingFile.file_name}
-                      </Tag>
-                    ) : (
-                      <Tag color="default" style={{ marginBottom: 6 }}>未选择</Tag>
-                    )}
-                    <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>云盘文件列表</label>
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <Button size="small" type="link" onClick={openUploadModal}>📤上传</Button>
-                        <Button size="small" onClick={() => loadCustomDubbingFiles(customDubbingFilesPage)} loading={customDubbingFilesLoading}>刷新</Button>
-                      </div>
-                    </div>
-                    {customDubbingFilesLoading ? (
-                      <Spin tip="加载文件..." />
-                    ) : (
-                      <>
-                        <List
-                          size="small"
-                          dataSource={customDubbingFiles}
-                          renderItem={(file: ICloudFile) => {
-                            const isSelected = selectedCustomDubbingFile?.file_id === file.file_id;
-                            return (
-                              <Card size="small" style={{ marginBottom: 4, background: isSelected ? '#e6f7ff' : '#fff' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div title={file.file_name} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                      {file.file_name}
-                                    </div>
-                                    <div style={{ fontSize: 10, color: '#999' }}>
-                                      {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
-                                    </div>
-                                  </div>
-                                  <Button size="small" type={isSelected ? 'primary' : 'default'} style={{ marginLeft: 8 }}
-                                    onClick={() => { setSelectedCustomDubbingFile(isSelected ? null : file); if (!isSelected) setDubbingListExpanded(false); }}>
-                                    {isSelected ? '已选择' : '选择'}
-                                  </Button>
-                                </div>
-                              </Card>
-                            );
-                          }}
-                        />
-                        {customDubbingFilesTotalPages > 1 && (
-                          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
-                            <Button size="small" disabled={customDubbingFilesPage <= 1} onClick={() => loadCustomDubbingFiles(customDubbingFilesPage - 1)}>上一页</Button>
-                            <span style={{ fontSize: 12, lineHeight: '24px' }}>{customDubbingFilesPage}/{customDubbingFilesTotalPages}</span>
-                            <Button size="small" disabled={customDubbingFilesPage >= customDubbingFilesTotalPages} onClick={() => loadCustomDubbingFiles(customDubbingFilesPage + 1)}>下一页</Button>
-                          </div>
-                        )}
-                      </>
-                    )}
+                  <div style={{ marginBottom: 12 }}>
+                    <label className="form-label" style={{ fontSize: 11 }}>
+                      自定义配音名称 <span style={{ color: '#ff4d4f' }}>*必填</span>
+                    </label>
+                    <Input
+                      placeholder="输入配音名称，如 test_dubbing"
+                      value={customDubbingText}
+                      onChange={(e) => setCustomDubbingText(e.target.value)}
+                      onPressEnter={() => { if (customDubbingText.trim()) setDubbingListExpanded(false); }}
+                    />
                   </div>
                 )}
                 
@@ -1961,7 +2444,7 @@ function LoadApp() {
             {taskPhase === 'idle' && (
               <div>
                 <div className="confirm-card">
-                  <p><strong>电影:</strong> {selectedMovie?.name}</p>
+                  <p><strong>电影:</strong> {selectedMovie?.name === '自定义' ? '自定义电影' : selectedMovie?.name}</p>
                   {isCustomMovie && (
                     <>
                       <p className="hint">剧集SRT: {selectedEpisodeSrtFile?.file_name}</p>
@@ -1974,25 +2457,23 @@ function LoadApp() {
                       <p className="hint">字幕ID: {selectedMovie?.srt_file_id}</p>
                     </>
                   )}
-                  <p><strong>模板:</strong> {selectedTemplate?.name}</p>
+                  <p><strong>模板:</strong> {selectedTemplate?.name === '自定义' ? '自定义模板' : selectedTemplate?.name}</p>
                   {selectedTemplate?.name === '自定义' ? (
                     <>
                       <p className="hint">爆款SRT: {selectedViralSrtFile?.file_name}</p>
+                      {selectedViralVideoFile && <p className="hint">爆款视频: {selectedViralVideoFile.file_name}</p>}
                       <p><strong>解说类型:</strong> {{ movie: '电影', first_person_movie: '第一人称电影', multilingual: '多语种电影', first_person_multilingual: '第一人称多语种', short_drama: '短剧' }[narratorType] || narratorType}</p>
-                      <p><strong>模型版本:</strong> {modelVersion === 'advanced' ? '高级版' : '标准版'}</p>
+                      <p><strong>模型版本:</strong> 标准版</p>
                       <p className="hint" style={{ color: '#eb2f96' }}>将先生成爆款模型，再自动创建文案</p>
                     </>
                   ) : (
                     <p className="hint">模型ID: {selectedTemplate?.learning_model_id}</p>
                   )}
-                  <p><strong>BGM:</strong> {selectedBGM?.name === '自定义' ? `自定义 (${selectedCustomBgmFile?.file_name})` : selectedBGM?.name === 'no_bgm' ? '不使用BGM' : selectedBGM?.name}</p>
-                  <p><strong>配音:</strong> {selectedDubbing?.name === '自定义' ? `自定义 (${selectedCustomDubbingFile?.file_name})` : selectedDubbing?.name}</p>
+                  <p><strong>BGM:</strong> {selectedBGM?.name === '自定义' ? `自定义 (${selectedCustomBgmFile?.file_name})` : selectedBGM?.name === 'NO_BGM' ? '不使用BGM' : selectedBGM?.name}</p>
+                  <p><strong>配音:</strong> {selectedDubbing?.name === '自定义' ? `自定义 (${customDubbingText})` : selectedDubbing?.name}</p>
                   <p><strong>平台:</strong> {targetPlatform}</p>
                   <p><strong>交付模式:</strong> {deliveryMode === 'staged' ? '分段式交付' : '一站式交付'}</p>
                 </div>
-                <Button type="primary" size="large" block className="btn-primary-gradient" onClick={executeWorkflow}>
-                  开始生成视频
-                </Button>
               </div>
             )}
             
@@ -2047,7 +2528,7 @@ function LoadApp() {
   // 检查是否可以进入下一步
   const canGoNext = () => {
     switch (currentStep) {
-      case 0: return isCustomMovie ? (!!selectedMovie && !!selectedEpisodeSrtFile && !!selectedEpisodeVideoFile) : !!selectedMovie;
+      case 0: return isCustomMovie ? (!!selectedMovie && !!customMovieName.trim() && !!selectedEpisodeSrtFile && !!selectedEpisodeVideoFile) : !!selectedMovie;
       case 1: {
         if (!selectedTemplate) return false;
         if (selectedTemplate.name === '自定义') return !!selectedViralSrtFile;
@@ -2056,7 +2537,7 @@ function LoadApp() {
       case 2: {
         if (!selectedBGM || !selectedDubbing) return false;
         if (selectedBGM.name === '自定义' && !selectedCustomBgmFile) return false;
-        if (selectedDubbing.name === '自定义' && !selectedCustomDubbingFile) return false;
+        if (selectedDubbing.name === '自定义' && !customDubbingText.trim()) return false;
         return true;
       }
       default: return false;
@@ -2093,25 +2574,35 @@ function LoadApp() {
   const renderOrdersPage = () => (
     <div className="page">
       <div className="page-header">
-        <h3>我的解说订单</h3>
+        <h3>AI解说大师</h3>
         <div className="page-header-actions">
-          <Button size="small" onClick={refreshOrders}>刷新</Button>
+          <Button size="small" onClick={refreshOrders} loading={refreshingOrders}>🔄 同步订单状态</Button>
           <Button size="small" type="link" danger onClick={handleLogout}>退出</Button>
         </div>
       </div>
+
+      {/* 用户信息卡片 */}
+      {userInfo && (
+        <div className="user-info-card">
+          <div className="user-info-row">
+            <span className="user-info-label">👤 {userInfo.nickname}</span>
+            <span className="user-info-company">{userInfo.company_name}</span>
+          </div>
+          <div className="user-info-row">
+            <span className="user-info-balance">💰 余额: <strong>{userInfo.balance}</strong> 点</span>
+            <span className="user-info-mobile">{userInfo.mobile}</span>
+          </div>
+        </div>
+      )}
       
       <Button type="primary" block className="btn-create" style={{ marginBottom: 8 }} onClick={startCreateOrder}>
         + 创建新订单
       </Button>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        <Button block className="btn-upload" onClick={openUploadModal}>
-          📤 上传文件到云盘
-        </Button>
-        <Button block onClick={() => { setUploadStep('transfers'); setUploadModalVisible(true); loadTransferList(1); }}>
-          📋 传输列表
-        </Button>
-      </div>
-      
+      <Button block className="btn-upload" style={{ marginBottom: 20 }} onClick={openCloudDriveModal}>
+        📁 我的云盘
+      </Button>
+
+      <h4 style={{ margin: '0 0 10px', fontSize: 15, fontWeight: 600, color: '#1a1a2e' }}>📋 我的订单</h4>
       {orders.length === 0 ? (
         <Empty description="暂无订单" />
       ) : (
@@ -2120,7 +2611,7 @@ function LoadApp() {
             <div className="order-card-header">
               <div>
                 <div className="order-card-title">{order.movieName}</div>
-                <div className="order-card-meta">{formatTime(order.createdAt)} | {order.templateName}</div>
+                <div className="order-card-meta">{formatTime(order.createdAt)} | {order.templateSource === 'generate' ? '自定义模板' : order.templateName}</div>
               </div>
               <Tag color={getStatusColor(order.status)}>{getStatusText(order.status)}</Tag>
             </div>
@@ -2183,7 +2674,7 @@ function LoadApp() {
           <div className="detail-info-grid">
             <div className="detail-info-item">
               <span className="label">模板:</span>
-              <span className="value">{currentOrder.templateName}{currentOrder.templateSource === 'generate' ? ' (自动生成)' : ''}</span>
+              <span className="value">{currentOrder.templateSource === 'generate' ? '自定义模板 (自动生成)' : currentOrder.templateName}</span>
             </div>
             <div className="detail-info-item">
               <span className="label">平台:</span>
@@ -2269,7 +2760,7 @@ function LoadApp() {
               {task.status === 'wait_confirm' && (
                 <div className="task-confirm-block">
                   <div className="task-confirm-title">
-                    {task.type === 'script' ? '📝 解说文案已生成，请确认' : '✂️ 剪辑脚本已生成，请确认'}
+                    {task.type === 'viral_learn' ? `🧠 爆款模型已生成，模型ID: ${task.result?.api_response?.data?.results?.order_info?.learning_model_id || '未知'}` : task.type === 'script' ? '📝 解说文案已生成，请确认' : '✂️ 剪辑脚本已生成，请确认'}
                   </div>
                   <Button type="primary" size="small" style={{ borderRadius: 8 }} onClick={() => confirmTask(currentOrder.id, task.type)}>
                     确认并继续下一步
@@ -2325,22 +2816,34 @@ function LoadApp() {
         {renderStepContent()}
       </div>
       
-      {currentStep < 3 && taskPhase === 'idle' && (
+      {taskPhase === 'idle' && (
         <div className="step-actions">
           {currentStep > 0 && (
             <Button onClick={() => setCurrentStep(currentStep - 1)}>
               上一步
             </Button>
           )}
-          <Button
-            type="primary"
-            className="btn-primary-gradient"
-            disabled={!canGoNext()}
-            onClick={() => setCurrentStep(currentStep + 1)}
-            style={{ flex: 1 }}
-          >
-            {currentStep === 2 ? '确认配置' : '下一步'}
-          </Button>
+          {currentStep < 3 && (
+            <Button
+              type="primary"
+              className="btn-primary-gradient"
+              disabled={!canGoNext()}
+              onClick={() => setCurrentStep(currentStep + 1)}
+              style={{ flex: 1 }}
+            >
+              {currentStep === 2 ? '确认配置' : '下一步'}
+            </Button>
+          )}
+          {currentStep === 3 && (
+            <Button
+              type="primary"
+              className="btn-primary-gradient"
+              onClick={handleEstimatePoints}
+              style={{ flex: 1 }}
+            >
+              开始生成视频
+            </Button>
+          )}
         </div>
       )}
     </div>
@@ -2366,6 +2869,7 @@ function LoadApp() {
     <>
       {pageContent}
       {renderUploadModal()}
+      {renderEstimateModal()}
     </>
   );
 }
