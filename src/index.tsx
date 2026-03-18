@@ -3024,15 +3024,32 @@ function LoadApp() {
                   {task.type === 'viral_learn' && (
                     <div><strong>🧠 模型ID:</strong> {task.result?.api_response?.data?.results?.order_info?.learning_model_id || '未知'}</div>
                   )}
-                  {task.type === 'video' && task.result?.api_response?.data?.results?.tasks?.[0]?.video_url && (
-                    <div><strong>🎬 视频地址:</strong> {task.result.api_response.data.results.tasks[0].video_url}</div>
-                  )}
                   {task.result?.api_response?.data?.consumed_points > 0 && (
                     <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>消耗点数: {task.result.api_response.data.consumed_points}</div>
                   )}
-                  {(() => {
-                    const files = task.result?.api_response?.data?.files;
-                    if (!Array.isArray(files) || files.length === 0) return null;
+                  {task.type !== 'viral_learn' && (() => {
+                    // 优先使用 data.files；script/clip 任务若无 files 则从 task_result 构造
+                    let files: any[] = task.result?.api_response?.data?.files || [];
+                    if (files.length === 0 && (task.type === 'script' || task.type === 'clip')) {
+                      const taskResults: any[] = task.result?.api_response?.data?.results?.tasks || [];
+                      files = taskResults.reduce((acc: any[], t: any) => {
+                        if (!t.task_result) return acc;
+                        let fileId = t.task_result;
+                        let fileName = t.task_result;
+                        if (typeof t.task_result === 'string' && t.task_result.startsWith('{')) {
+                          try {
+                            const parsed = JSON.parse(t.task_result);
+                            fileId = parsed.clip_data_file || parsed.file_id || t.task_result;
+                            fileName = parsed.clip_data_file || t.task_result;
+                          } catch { /* keep original */ }
+                        }
+                        const namePart = String(fileName).split('/').pop() || String(fileName);
+                        const suffix = namePart.includes('.') ? namePart.split('.').pop() : '';
+                        acc.push({ file_id: fileId, file_name: namePart, original_name: namePart, suffix, file_size: 0 });
+                        return acc;
+                      }, []);
+                    }
+                    if (files.length === 0) return null;
                     return (
                       <div style={{ marginTop: 4 }}>
                         <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>📎 产物文件 ({files.length})</div>
@@ -3040,10 +3057,10 @@ function LoadApp() {
                           <div key={fi} className="task-file-item">
                             <div className="task-file-info">
                               <span className="task-file-name" title={f.file_path || f.file_name}>{f.original_name || f.file_name}</span>
-                              <span className="task-file-meta">{f.suffix} | {(Number(f.file_size) / 1024).toFixed(1)}KB</span>
+                              <span className="task-file-meta">{f.suffix}{f.file_size > 0 ? ` | ${(Number(f.file_size) / 1024).toFixed(1)}KB` : ''}</span>
                             </div>
                             <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
-                              {task.type !== 'viral_learn' && f.file_id && (
+                              {f.file_id && (
                                 <Button size="small" type="link" style={{ fontSize: 11, padding: '0 4px' }}
                                   loading={downloadingFileId === f.file_id}
                                   onClick={async () => {
