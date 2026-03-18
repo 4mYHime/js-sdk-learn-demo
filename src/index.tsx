@@ -6,7 +6,7 @@ import { fetchMovies } from './api/movies';
 import { fetchTemplates } from './api/templates';
 import { fetchBGMList } from './api/bgm';
 import { fetchDubbingList } from './api/dubbing';
-import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete, preUpload, uploadTask, fetchTransferList, deleteFile, updatePreFile, fetchUserBalance, fetchCloudDriveUsage, estimatePoints } from './api/tasks';
+import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete, preUpload, uploadTask, fetchTransferList, deleteFile, updatePreFile, fetchUserBalance, fetchCloudDriveUsage, estimatePoints, fetchFileDownloadUrl } from './api/tasks';
 import {
   IOrder, ITask, TaskType, OrderStatus, DeliveryMode,
   getCurrentUser, setCurrentUser, logout,
@@ -52,7 +52,7 @@ function LoadApp() {
   const [selectedTemplate, setSelectedTemplate] = useState<INarratorTemplate | null>(null);
   
   // Step 0 (自定义电影): episode 文件选择
-  const [episodeFileStep, setEpisodeFileStep] = useState<'srt' | 'video'>('srt');
+  const [episodeFileStep, setEpisodeFileStep] = useState<'srt' | 'video' | null>('srt');
   const [episodeSrtFiles, setEpisodeSrtFiles] = useState<ICloudFile[]>([]);
   const [episodeSrtFilesLoading, setEpisodeSrtFilesLoading] = useState(false);
   const [episodeSrtFilesPage, setEpisodeSrtFilesPage] = useState(1);
@@ -64,6 +64,7 @@ function LoadApp() {
   const [selectedEpisodeSrtFile, setSelectedEpisodeSrtFile] = useState<ICloudFile | null>(null);
   const [selectedEpisodeVideoFile, setSelectedEpisodeVideoFile] = useState<ICloudFile | null>(null);
   const [customMovieName, setCustomMovieName] = useState('');
+  const [episodePairs, setEpisodePairs] = useState<Array<{ srt: ICloudFile; video: ICloudFile }>>([]);
 
   // Step 1 (自定义模板): 爆款SRT文件选择 + 爆款模型配置
   const [viralSrtFiles, setViralSrtFiles] = useState<ICloudFile[]>([]);
@@ -181,6 +182,7 @@ function LoadApp() {
   const [taskPhase, setTaskPhase] = useState<TaskPhase>('idle');
   const [taskMessage, setTaskMessage] = useState('');
   const [retryingTaskType, setRetryingTaskType] = useState<TaskType | null>(null);
+  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   
   // 加载电影列表
@@ -277,7 +279,8 @@ function LoadApp() {
     try {
       // 一次拉取足够多的文件，前端筛选音频格式
       const res = await fetchCloudFilesDirect(appKey, { page: 1, pageSize: 200 });
-      const audioFiles = res.data.items.filter((f: ICloudFile) => ['mp3', 'm4a', 'mav'].includes(f.suffix));
+      const items = res?.data?.items || [];
+      const audioFiles = items.filter((f: ICloudFile) => ['mp3', 'm4a', 'mav', 'wav', 'aac', 'flac', 'ogg'].includes(f.suffix));
       setAllBgmFiles(audioFiles);
       const totalPages = Math.max(1, Math.ceil(audioFiles.length / BGM_PAGE_SIZE));
       const safePage = Math.min(page, totalPages);
@@ -286,6 +289,7 @@ function LoadApp() {
       setCustomBgmFilesPage(safePage);
     } catch (error) {
       console.error('加载自定义BGM文件失败:', error);
+      message.error('加载BGM文件列表失败，请点击刷新重试');
     } finally {
       setCustomBgmFilesLoading(false);
     }
@@ -512,19 +516,21 @@ function LoadApp() {
           updateOrderTask(orderId, placeholderScriptTask);
           setCurrentOrder(getOrder(orderId));
           
-          const episodesData: IEpisodeData[] = [{
-            num: 1,
-            srt_oss_key: order.videoSrtPath,
-            video_oss_key: order.videoPath || order.videoSrtPath,
-            negative_oss_key: order.videoPath || order.videoSrtPath
-          }];
-          
+          const episodesData: IEpisodeData[] = order.episodesData?.length > 0
+            ? order.episodesData
+            : [{
+                num: 1,
+                srt_oss_key: order.videoSrtPath,
+                video_oss_key: order.videoPath || order.videoSrtPath,
+                negative_oss_key: order.videoPath || order.videoSrtPath
+              }];
+
           const scriptResponse = await generateScript({
             app_key: order.appKey,
             learning_model_id: learningModelId,
             episodes_data: episodesData,
             playlet_name: order.movieName,
-            playlet_num: '1',
+            playlet_num: episodesData.map(e => e.num).join(','),
             target_platform: order.targetPlatform,
             task_count: 1,
             target_character_name: order.targetCharacterName || '主角',
@@ -532,7 +538,7 @@ function LoadApp() {
             vendor_requirements: order.vendorRequirements || `投放在${order.targetPlatform}，吸引18-35岁的年轻用户观看。`,
             story_info: order.storyInfo || ''
           });
-          
+
           // API 返回后更新为 running 状态
           const newScriptTask: ITask = {
             type: 'script', taskId: scriptResponse.task_id, orderNum: '',
@@ -648,6 +654,15 @@ function LoadApp() {
     pollingRef.current = false;
   }, []);
   
+  // 回到订单列表页时刷新余额点数
+  useEffect(() => {
+    if (page === 'orders' && appKey) {
+      fetchUserBalance(appKey).then(res => {
+        if (res?.data) setUserInfo(res.data);
+      }).catch(() => {});
+    }
+  }, [page, appKey]);
+
   // 订单列表页：复用 resumeOrderWorkflow 处理活跃订单（完整工作流推进）
   useEffect(() => {
     if (page === 'orders' && appKey) {
@@ -767,7 +782,10 @@ function LoadApp() {
         }
         case 'script': {
           let episodesData: IEpisodeData[];
-          if (order.templateSource === 'generate') {
+          if (order.episodesData?.length > 0) {
+            // 优先使用订单中存储的 episodesData（支持短剧多集对）
+            episodesData = order.episodesData;
+          } else if (order.templateSource === 'generate') {
             // 自定义电影：从订单数据构建
             episodesData = [{
               num: 1,
@@ -794,7 +812,7 @@ function LoadApp() {
             learning_model_id: learningModelId,
             episodes_data: episodesData,
             playlet_name: order.movieName,
-            playlet_num: '1',
+            playlet_num: episodesData.map(e => e.num).join(','),
             target_platform: order.targetPlatform,
             task_count: 1,
             target_character_name: '主角',
@@ -873,6 +891,7 @@ function LoadApp() {
     setSelectedEpisodeSrtFile(null);
     setSelectedEpisodeVideoFile(null);
     setCustomMovieName('');
+    setEpisodePairs([]);
     setSelectedViralSrtFile(null);
     setSelectedViralVideoFile(null);
     setSelectedCustomBgmFile(null);
@@ -893,7 +912,16 @@ function LoadApp() {
   
   // 是否为自定义电影
   const isCustomMovie = selectedMovie?.name === '自定义';
+  const isShortDrama = narratorType === 'short_drama';
   
+  // 短剧模式自动选中"自定义"电影
+  useEffect(() => {
+    if (isShortDrama && !selectedMovie && movies.length > 0) {
+      const customMovie = movies.find(m => m.name === '自定义');
+      if (customMovie) setSelectedMovie(customMovie);
+    }
+  }, [isShortDrama, selectedMovie, movies]);
+
   // 步骤变化时加载数据
   useEffect(() => {
     if (currentStep === 0 && isCustomMovie) {
@@ -905,7 +933,10 @@ function LoadApp() {
     if (currentStep === 2 && bgmList.length === 0) {
       loadConfig();
     }
-  }, [currentStep, isCustomMovie, templates.length, episodeSrtFiles.length, bgmList.length, loadTemplates, loadEpisodeSrtFiles, loadConfig]);
+    if (currentStep === 2 && selectedBGM?.name === '自定义' && customBgmFiles.length === 0) {
+      loadCustomBgmFiles();
+    }
+  }, [currentStep, isCustomMovie, templates.length, episodeSrtFiles.length, bgmList.length, loadTemplates, loadEpisodeSrtFiles, loadConfig, selectedBGM, customBgmFiles.length, loadCustomBgmFiles]);
   
   // 预估点数：点击"开始生成视频"时先调用
   const handleEstimatePoints = async () => {
@@ -919,7 +950,11 @@ function LoadApp() {
       setErrorMessage('请输入电影名称');
       return;
     }
-    if (_isCustomMovie && !selectedEpisodeSrtFile) {
+    if (_isCustomMovie && isShortDrama && episodePairs.length === 0) {
+      setErrorMessage('请至少添加一对SRT+视频文件');
+      return;
+    }
+    if (_isCustomMovie && !isShortDrama && !selectedEpisodeSrtFile) {
       setErrorMessage('请选择视频SRT文件（用于构建剧集数据）');
       return;
     }
@@ -942,16 +977,25 @@ function LoadApp() {
     setEstimateResult(null);
     setEstimateModalVisible(true);
 
-    const srtOssKey = _isCustomMovie ? (selectedEpisodeSrtFile!.file_id) : selectedMovie.srt_file_id;
-    const videoOssKey = _isCustomMovie ? (selectedEpisodeVideoFile?.file_id || selectedEpisodeSrtFile!.file_id) : selectedMovie.video_file_id;
+    const srtOssKey = _isCustomMovie && !isShortDrama ? (selectedEpisodeSrtFile!.file_id) : selectedMovie.srt_file_id;
+    const videoOssKey = _isCustomMovie && !isShortDrama ? (selectedEpisodeVideoFile?.file_id || selectedEpisodeSrtFile!.file_id) : selectedMovie.video_file_id;
+
+    const estimateEpisodesData = _isCustomMovie && isShortDrama
+      ? episodePairs.map((pair, i) => ({
+          num: i + 1,
+          srt_oss_key: pair.srt.file_id,
+          video_oss_key: pair.video.file_id,
+          negative_oss_key: pair.video.file_id
+        }))
+      : [{
+          num: 1,
+          srt_oss_key: srtOssKey,
+          video_oss_key: videoOssKey,
+          negative_oss_key: videoOssKey
+        }];
 
     const requestParams: any = {
-      episodes_data: [{
-        num: 1,
-        srt_oss_key: srtOssKey,
-        video_oss_key: videoOssKey,
-        negative_oss_key: videoOssKey
-      }],
+      episodes_data: estimateEpisodesData,
       model_version: _isCustomTemplate ? modelVersion : 'standard',
       ...(_isCustomTemplate
         ? { learning_srt: selectedViralSrtFile!.file_id }
@@ -984,7 +1028,11 @@ function LoadApp() {
       setErrorMessage('请输入电影名称');
       return;
     }
-    if (_isCustomMovie && !selectedEpisodeSrtFile) {
+    if (_isCustomMovie && isShortDrama && episodePairs.length === 0) {
+      setErrorMessage('请至少添加一对SRT+视频文件');
+      return;
+    }
+    if (_isCustomMovie && !isShortDrama && !selectedEpisodeSrtFile) {
       setErrorMessage('请选择视频SRT文件（用于构建剧集数据）');
       return;
     }
@@ -1006,9 +1054,24 @@ function LoadApp() {
     setErrorMessage('');
     
     // 构建 episode_data 所需的文件ID
-    const srtOssKey = _isCustomMovie ? (selectedEpisodeSrtFile!.file_id) : selectedMovie.srt_file_id;
-    const videoOssKey = _isCustomMovie ? (selectedEpisodeVideoFile?.file_id || selectedEpisodeSrtFile!.file_id) : selectedMovie.video_file_id;
-    
+    const srtOssKey = _isCustomMovie && !isShortDrama ? (selectedEpisodeSrtFile!.file_id) : selectedMovie.srt_file_id;
+    const videoOssKey = _isCustomMovie && !isShortDrama ? (selectedEpisodeVideoFile?.file_id || selectedEpisodeSrtFile!.file_id) : selectedMovie.video_file_id;
+
+    // 构建 episodesData（短剧多集对 vs 单集）
+    const orderEpisodesData = _isCustomMovie && isShortDrama
+      ? episodePairs.map((pair, i) => ({
+          num: i + 1,
+          srt_oss_key: pair.srt.file_id,
+          video_oss_key: pair.video.file_id,
+          negative_oss_key: pair.video.file_id
+        }))
+      : [{
+          num: 1,
+          srt_oss_key: srtOssKey,
+          video_oss_key: videoOssKey,
+          negative_oss_key: videoOssKey
+        }];
+
     let order: IOrder | null = null;
     try {
       // 创建订单记录
@@ -1029,11 +1092,12 @@ function LoadApp() {
         vendorRequirements: vendorRequirements || `投放在${targetPlatform}，吸引18-35岁的年轻用户观看。`,
         storyInfo: selectedMovie.story_info || '',
         deliveryMode: deliveryMode,
-        videoPath: videoOssKey,
-        videoSrtPath: srtOssKey,
+        videoPath: isShortDrama ? (episodePairs[0]?.video.file_id || '') : videoOssKey,
+        videoSrtPath: isShortDrama ? (episodePairs[0]?.srt.file_id || '') : srtOssKey,
         viralSrtPath: _isCustomTemplate ? selectedViralSrtFile!.file_id : '',
-        narratorType: _isCustomTemplate ? narratorType : '',
-        modelVersion: _isCustomTemplate ? modelVersion : ''
+        narratorType: narratorType,
+        modelVersion: modelVersion,
+        episodesData: orderEpisodesData
       });
       
       if (_isCustomTemplate) {
@@ -1067,19 +1131,12 @@ function LoadApp() {
         updateOrderStatus(order.id, 'script');
         setTaskMessage('正在创建文案任务...');
         
-        const episodesData: IEpisodeData[] = [{
-          num: 1,
-          srt_oss_key: srtOssKey,
-          video_oss_key: videoOssKey,
-          negative_oss_key: videoOssKey
-        }];
-        
         const scriptResponse = await generateScript({
           app_key: appKey,
           learning_model_id: selectedTemplate.learning_model_id,
-          episodes_data: episodesData,
+          episodes_data: orderEpisodesData,
           playlet_name: _isCustomMovie ? (customMovieName.trim() || selectedEpisodeVideoFile?.file_name?.replace(/\.[^.]+$/, '') || selectedEpisodeSrtFile?.file_name?.replace(/\.[^.]+$/, '') || '自定义解说') : selectedMovie.name,
-          playlet_num: '1',
+          playlet_num: orderEpisodesData.map(e => e.num).join(','),
           target_platform: targetPlatform,
           task_count: 1,
           target_character_name: targetCharacterName || selectedMovie.character_name || '主角',
@@ -1135,6 +1192,7 @@ function LoadApp() {
     setSelectedEpisodeSrtFile(null);
     setSelectedEpisodeVideoFile(null);
     setCustomMovieName('');
+    setEpisodePairs([]);
     setSelectedViralSrtFile(null);
     setSelectedViralVideoFile(null);
     setSelectedCustomBgmFile(null);
@@ -1461,7 +1519,10 @@ function LoadApp() {
                   <div className="cloud-drive-usage-header">
                     <span>☁️ 云盘空间</span>
                     <span className="cloud-drive-usage-text">
-                      {(cloudDriveUsage.used_size / 1024 / 1024).toFixed(1)} MB / {(cloudDriveUsage.max_size / 1024 / 1024 / 1024).toFixed(1)} GB
+                      {cloudDriveUsage.used_size >= 1024 * 1024 * 1024
+                        ? (cloudDriveUsage.used_size / 1024 / 1024 / 1024).toFixed(2) + ' GB'
+                        : (cloudDriveUsage.used_size / 1024 / 1024).toFixed(1) + ' MB'
+                      } / {(cloudDriveUsage.max_size / 1024 / 1024 / 1024).toFixed(1)} GB
                     </span>
                   </div>
                   <div className="cloud-drive-progress-bar">
@@ -1590,14 +1651,14 @@ function LoadApp() {
                           disabled={updatingRelationFileId === f.pre_file_id}
                           onChange={(val) => {
                             if (val) {
-                              const target = preUploadResult.data.subtitle.find(s => String(s.id) === val) || null;
+                              const target = (preUploadResult.data.subtitle || []).find(s => String(s.id) === val) || null;
                               handleUpdateRelation(f, target, 'video');
                             } else {
                               handleUpdateRelation(f, null, 'video');
                             }
                           }}
                         >
-                          {preUploadResult.data.subtitle.map((s: IPreUploadFile) => (
+                          {(preUploadResult.data.subtitle || []).map((s: IPreUploadFile) => (
                             <Select.Option key={s.id} value={String(s.id)}>{s.file_name}</Select.Option>
                           ))}
                         </Select>
@@ -1629,14 +1690,14 @@ function LoadApp() {
                           disabled={updatingRelationFileId === f.pre_file_id}
                           onChange={(val) => {
                             if (val) {
-                              const target = preUploadResult.data.video.find(v => String(v.id) === val) || null;
+                              const target = (preUploadResult.data.video || []).find(v => String(v.id) === val) || null;
                               handleUpdateRelation(f, target, 'subtitle');
                             } else {
                               handleUpdateRelation(f, null, 'subtitle');
                             }
                           }}
                         >
-                          {preUploadResult.data.video.map((v: IPreUploadFile) => (
+                          {(preUploadResult.data.video || []).map((v: IPreUploadFile) => (
                             <Select.Option key={v.id} value={String(v.id)}>{v.file_name}</Select.Option>
                           ))}
                         </Select>
@@ -1747,11 +1808,43 @@ function LoadApp() {
         return (
           <div>
             <div className="section-title">选择爆款电影</div>
+
+            <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label className="form-label">解说类型</label>
+                <Select style={{ width: '100%' }} value={narratorType} onChange={(v: string) => {
+                  setNarratorType(v);
+                  setSelectedTemplate(null);
+                  setSelectedMovie(null);
+                  setSelectedEpisodeSrtFile(null);
+                  setSelectedEpisodeVideoFile(null);
+                  setCustomMovieName('');
+                  setEpisodePairs([]);
+                }}
+                  options={[
+                    { label: '电影', value: 'movie' },
+                    { label: '第一人称电影', value: 'first_person_movie' },
+                    { label: '多语种电影', value: 'multilingual' },
+                    { label: '第一人称多语种', value: 'first_person_multilingual' },
+                    { label: '短剧', value: 'short_drama' }
+                  ]}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label className="form-label">模型版本</label>
+                <Select style={{ width: '100%' }} value={modelVersion} onChange={(v: string) => { setModelVersion(v); setSelectedTemplate(null); }}
+                  options={[
+                    { label: '标准版 (standard)', value: 'standard' }
+                  ]}
+                />
+              </div>
+            </div>
+
             <div className={`movie-list-scroll ${isCustomMovie ? 'compact' : ''}`}>
               {moviesLoading ? (
                 <Spin tip="加载中..." />
               ) : (
-                movies.map((movie) => (
+                (isShortDrama ? movies.filter(m => m.name === '自定义') : movies).map((movie) => (
                   <div
                     key={movie.id}
                     className={`select-card ${selectedMovie?.id === movie.id ? 'selected' : ''}`}
@@ -1778,153 +1871,352 @@ function LoadApp() {
             {isCustomMovie && (
               <div className="cloud-file-section">
                 <div className="form-group" style={{ marginBottom: 12 }}>
-                  <label className="form-label">电影名称 <span style={{ color: '#ff4d4f' }}>*必填</span></label>
-                  <Input placeholder="请输入电影名称" value={customMovieName} onChange={(e) => setCustomMovieName(e.target.value)} />
-                </div>
-                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                  <Button
-                    type={episodeFileStep === 'srt' ? 'primary' : 'default'}
-                    size="small"
-                    style={{ borderRadius: 8, flex: 1 }}
-                    onClick={() => { setEpisodeFileStep('srt'); if (episodeSrtFiles.length === 0) loadEpisodeSrtFiles(); }}
-                  >
-                    ① 选择SRT文件 {selectedEpisodeSrtFile ? '✓' : '*'}
-                  </Button>
-                  <Button
-                    type={episodeFileStep === 'video' ? 'primary' : 'default'}
-                    size="small"
-                    style={{ borderRadius: 8, flex: 1 }}
-                    onClick={() => { setEpisodeFileStep('video'); if (episodeVideoFiles.length === 0) loadEpisodeVideoFiles(); }}
-                  >
-                    ② 选择视频文件 {selectedEpisodeVideoFile ? '✓' : '*'}
-                  </Button>
+                  <label className="form-label">影片名称 <span style={{ color: '#ff4d4f' }}>*必填</span></label>
+                  <Input placeholder="请输入影片名称" value={customMovieName} onChange={(e) => setCustomMovieName(e.target.value)} />
                 </div>
 
-                <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <label className="form-label" style={{ fontSize: 11, marginBottom: 4 }}>
-                      已选SRT <span style={{ color: '#ff4d4f' }}>*必需</span>
-                    </label>
-                    {selectedEpisodeSrtFile ? (
-                      <Tag color="blue" closable onClose={() => setSelectedEpisodeSrtFile(null)} title={selectedEpisodeSrtFile.file_name}
-                        style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer' }}
-                        onClick={() => { navigator.clipboard.writeText(selectedEpisodeSrtFile.file_name); message.success('文件名已复制'); }}>
-                        {selectedEpisodeSrtFile.file_name}
-                      </Tag>
-                    ) : (
-                      <Tag color="default">未选择</Tag>
-                    )}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <label className="form-label" style={{ fontSize: 11, marginBottom: 4 }}>
-                      已选视频 <span style={{ color: '#ff4d4f' }}>*必需</span>
-                    </label>
-                    {selectedEpisodeVideoFile ? (
-                      <Tag color="green" closable onClose={() => setSelectedEpisodeVideoFile(null)} title={selectedEpisodeVideoFile.file_name}
-                        style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer' }}
-                        onClick={() => { navigator.clipboard.writeText(selectedEpisodeVideoFile.file_name); message.success('文件名已复制'); }}>
-                        {selectedEpisodeVideoFile.file_name}
-                      </Tag>
-                    ) : (
-                      <Tag color="default">未选择</Tag>
-                    )}
-                  </div>
-                </div>
-
-                {episodeFileStep === 'srt' && (
+                {isShortDrama ? (
                   <>
-                    <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>SRT文件列表</label>
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <Button size="small" type="link" onClick={openUploadModal}>📤上传</Button>
-                        <Button size="small" onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage)} loading={episodeSrtFilesLoading}>刷新</Button>
+                    {/* 短剧模式：多集对 */}
+                    {episodePairs.length > 0 && (
+                      <div style={{ marginBottom: 12 }}>
+                        <label className="form-label" style={{ fontSize: 12 }}>已添加剧集 ({episodePairs.length} 对)</label>
+                        {episodePairs.map((pair, index) => (
+                          <Card key={index} size="small" style={{ marginBottom: 4 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ flex: 1, minWidth: 0, fontSize: 12 }}>
+                                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>#{index + 1} SRT: {pair.srt.file_name}</div>
+                                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#666' }}>视频: {pair.video.file_name}</div>
+                              </div>
+                              <Button size="small" danger style={{ marginLeft: 8 }}
+                                onClick={() => setEpisodePairs(prev => prev.filter((_, i) => i !== index))}>
+                                删除
+                              </Button>
+                            </div>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+
+                    <div style={{ border: '1px dashed #d9d9d9', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                      <label className="form-label" style={{ fontSize: 12, marginBottom: 8 }}>添加新剧集对</label>
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                        <Button
+                          type={episodeFileStep === 'srt' ? 'primary' : 'default'}
+                          size="small"
+                          style={{ borderRadius: 8, flex: 1 }}
+                          onClick={() => { setEpisodeFileStep('srt'); if (episodeSrtFiles.length === 0) loadEpisodeSrtFiles(); }}
+                        >
+                          ① 选择SRT文件 {selectedEpisodeSrtFile ? '✓' : '*'}
+                        </Button>
+                        <Button
+                          type={episodeFileStep === 'video' ? 'primary' : 'default'}
+                          size="small"
+                          style={{ borderRadius: 8, flex: 1 }}
+                          onClick={() => { setEpisodeFileStep('video'); if (episodeVideoFiles.length === 0) loadEpisodeVideoFiles(); }}
+                        >
+                          ② 选择视频文件 {selectedEpisodeVideoFile ? '✓' : '*'}
+                        </Button>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <label className="form-label" style={{ fontSize: 11, marginBottom: 4 }}>
+                            已选SRT <span style={{ color: '#ff4d4f' }}>*必需</span>
+                          </label>
+                          {selectedEpisodeSrtFile ? (
+                            <Tag color="blue" closable onClose={() => setSelectedEpisodeSrtFile(null)} title={selectedEpisodeSrtFile.file_name}
+                              style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer' }}
+                              onClick={() => { navigator.clipboard.writeText(selectedEpisodeSrtFile.file_name); message.success('文件名已复制'); }}>
+                              {selectedEpisodeSrtFile.file_name}
+                            </Tag>
+                          ) : (
+                            <Tag color="default">未选择</Tag>
+                          )}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <label className="form-label" style={{ fontSize: 11, marginBottom: 4 }}>
+                            已选视频 <span style={{ color: '#ff4d4f' }}>*必需</span>
+                          </label>
+                          {selectedEpisodeVideoFile ? (
+                            <Tag color="green" closable onClose={() => setSelectedEpisodeVideoFile(null)} title={selectedEpisodeVideoFile.file_name}
+                              style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer' }}
+                              onClick={() => { navigator.clipboard.writeText(selectedEpisodeVideoFile.file_name); message.success('文件名已复制'); }}>
+                              {selectedEpisodeVideoFile.file_name}
+                            </Tag>
+                          ) : (
+                            <Tag color="default">未选择</Tag>
+                          )}
+                        </div>
+                      </div>
+
+                      {episodeFileStep === 'srt' && (
+                        <>
+                          <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>SRT文件列表</label>
+                            <div style={{ display: 'flex', gap: 4 }}>
+                              <Button size="small" type="link" onClick={openUploadModal}>📤上传</Button>
+                              <Button size="small" onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage)} loading={episodeSrtFilesLoading}>刷新</Button>
+                            </div>
+                          </div>
+                          {episodeSrtFilesLoading ? (
+                            <Spin tip="加载SRT文件..." />
+                          ) : (
+                            <>
+                              <List
+                                size="small"
+                                dataSource={episodeSrtFiles}
+                                renderItem={(file: ICloudFile) => {
+                                  const isSelected = selectedEpisodeSrtFile?.file_id === file.file_id;
+                                  return (
+                                    <Card size="small" style={{ marginBottom: 4, background: isSelected ? '#e6f7ff' : '#fff' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                          <div title={file.file_name} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {file.file_name}
+                                          </div>
+                                          <div style={{ fontSize: 10, color: '#999' }}>
+                                            {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
+                                          </div>
+                                        </div>
+                                        <Button size="small" type={isSelected ? 'primary' : 'default'} style={{ marginLeft: 8 }}
+                                          onClick={() => { setSelectedEpisodeSrtFile(isSelected ? null : file); if (!isSelected) { setEpisodeFileStep('video'); if (episodeVideoFiles.length === 0) loadEpisodeVideoFiles(); } }}>
+                                          {isSelected ? '已选择' : '选择'}
+                                        </Button>
+                                      </div>
+                                    </Card>
+                                  );
+                                }}
+                              />
+                              {episodeSrtFilesTotalPages > 1 && (
+                                <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
+                                  <Button size="small" disabled={episodeSrtFilesPage <= 1} onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage - 1)}>上一页</Button>
+                                  <span style={{ fontSize: 12, lineHeight: '24px' }}>{episodeSrtFilesPage}/{episodeSrtFilesTotalPages}</span>
+                                  <Button size="small" disabled={episodeSrtFilesPage >= episodeSrtFilesTotalPages} onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage + 1)}>下一页</Button>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </>
+                      )}
+
+                      {episodeFileStep === 'video' && (
+                        <>
+                          <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>视频文件列表（按大小排序）</label>
+                            <div style={{ display: 'flex', gap: 4 }}>
+                              <Button size="small" type="link" onClick={openUploadModal}>📤上传</Button>
+                              <Button size="small" onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage)} loading={episodeVideoFilesLoading}>刷新</Button>
+                            </div>
+                          </div>
+                          {episodeVideoFilesLoading ? (
+                            <Spin tip="加载视频文件..." />
+                          ) : (
+                            <>
+                              <List
+                                size="small"
+                                dataSource={episodeVideoFiles}
+                                renderItem={(file: ICloudFile) => {
+                                  const isSelected = selectedEpisodeVideoFile?.file_id === file.file_id;
+                                  return (
+                                    <Card size="small" style={{ marginBottom: 4, background: isSelected ? '#e6f7ff' : '#fff' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                          <div title={file.file_name} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {file.file_name}
+                                          </div>
+                                          <div style={{ fontSize: 10, color: '#999' }}>
+                                            {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
+                                          </div>
+                                        </div>
+                                        <Button size="small" type={isSelected ? 'primary' : 'default'} style={{ marginLeft: 8 }}
+                                          onClick={() => { setSelectedEpisodeVideoFile(isSelected ? null : file); if (!isSelected) setEpisodeFileStep(null); }}>
+                                          {isSelected ? '已选择' : '选择'}
+                                        </Button>
+                                      </div>
+                                    </Card>
+                                  );
+                                }}
+                              />
+                              {episodeVideoFilesTotalPages > 1 && (
+                                <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
+                                  <Button size="small" disabled={episodeVideoFilesPage <= 1} onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage - 1)}>上一页</Button>
+                                  <span style={{ fontSize: 12, lineHeight: '24px' }}>{episodeVideoFilesPage}/{episodeVideoFilesTotalPages}</span>
+                                  <Button size="small" disabled={episodeVideoFilesPage >= episodeVideoFilesTotalPages} onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage + 1)}>下一页</Button>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </>
+                      )}
+
+                      <Button
+                        type="primary"
+                        block
+                        disabled={!selectedEpisodeSrtFile || !selectedEpisodeVideoFile}
+                        onClick={() => {
+                          if (selectedEpisodeSrtFile && selectedEpisodeVideoFile) {
+                            setEpisodePairs(prev => [...prev, { srt: selectedEpisodeSrtFile, video: selectedEpisodeVideoFile }]);
+                            setSelectedEpisodeSrtFile(null);
+                            setSelectedEpisodeVideoFile(null);
+                            setEpisodeFileStep('srt');
+                          }
+                        }}
+                        style={{ marginTop: 8 }}
+                      >
+                        添加此对 ({episodePairs.length + 1})
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* 非短剧模式：单 SRT+视频 选择 */}
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                      <Button
+                        type={episodeFileStep === 'srt' ? 'primary' : 'default'}
+                        size="small"
+                        style={{ borderRadius: 8, flex: 1 }}
+                        onClick={() => { setEpisodeFileStep('srt'); if (episodeSrtFiles.length === 0) loadEpisodeSrtFiles(); }}
+                      >
+                        ① 选择SRT文件 {selectedEpisodeSrtFile ? '✓' : '*'}
+                      </Button>
+                      <Button
+                        type={episodeFileStep === 'video' ? 'primary' : 'default'}
+                        size="small"
+                        style={{ borderRadius: 8, flex: 1 }}
+                        onClick={() => { setEpisodeFileStep('video'); if (episodeVideoFiles.length === 0) loadEpisodeVideoFiles(); }}
+                      >
+                        ② 选择视频文件 {selectedEpisodeVideoFile ? '✓' : '*'}
+                      </Button>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <label className="form-label" style={{ fontSize: 11, marginBottom: 4 }}>
+                          已选SRT <span style={{ color: '#ff4d4f' }}>*必需</span>
+                        </label>
+                        {selectedEpisodeSrtFile ? (
+                          <Tag color="blue" closable onClose={() => setSelectedEpisodeSrtFile(null)} title={selectedEpisodeSrtFile.file_name}
+                            style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer' }}
+                            onClick={() => { navigator.clipboard.writeText(selectedEpisodeSrtFile.file_name); message.success('文件名已复制'); }}>
+                            {selectedEpisodeSrtFile.file_name}
+                          </Tag>
+                        ) : (
+                          <Tag color="default">未选择</Tag>
+                        )}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <label className="form-label" style={{ fontSize: 11, marginBottom: 4 }}>
+                          已选视频 <span style={{ color: '#ff4d4f' }}>*必需</span>
+                        </label>
+                        {selectedEpisodeVideoFile ? (
+                          <Tag color="green" closable onClose={() => setSelectedEpisodeVideoFile(null)} title={selectedEpisodeVideoFile.file_name}
+                            style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer' }}
+                            onClick={() => { navigator.clipboard.writeText(selectedEpisodeVideoFile.file_name); message.success('文件名已复制'); }}>
+                            {selectedEpisodeVideoFile.file_name}
+                          </Tag>
+                        ) : (
+                          <Tag color="default">未选择</Tag>
+                        )}
                       </div>
                     </div>
-                    {episodeSrtFilesLoading ? (
-                      <Spin tip="加载SRT文件..." />
-                    ) : (
+
+                    {episodeFileStep === 'srt' && (
                       <>
-                        <List
-                          size="small"
-                          dataSource={episodeSrtFiles}
-                          renderItem={(file: ICloudFile) => {
-                            const isSelected = selectedEpisodeSrtFile?.file_id === file.file_id;
-                            return (
-                              <Card size="small" style={{ marginBottom: 4, background: isSelected ? '#e6f7ff' : '#fff' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div title={file.file_name} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                      {file.file_name}
-                                    </div>
-                                    <div style={{ fontSize: 10, color: '#999' }}>
-                                      {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
-                                    </div>
-                                  </div>
-                                  <Button size="small" type={isSelected ? 'primary' : 'default'} style={{ marginLeft: 8 }}
-                                    onClick={() => { setSelectedEpisodeSrtFile(isSelected ? null : file); if (!isSelected) { setEpisodeFileStep('video'); if (episodeVideoFiles.length === 0) loadEpisodeVideoFiles(); } }}>
-                                    {isSelected ? '已选择' : '选择'}
-                                  </Button>
-                                </div>
-                              </Card>
-                            );
-                          }}
-                        />
-                        {episodeSrtFilesTotalPages > 1 && (
-                          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
-                            <Button size="small" disabled={episodeSrtFilesPage <= 1} onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage - 1)}>上一页</Button>
-                            <span style={{ fontSize: 12, lineHeight: '24px' }}>{episodeSrtFilesPage}/{episodeSrtFilesTotalPages}</span>
-                            <Button size="small" disabled={episodeSrtFilesPage >= episodeSrtFilesTotalPages} onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage + 1)}>下一页</Button>
+                        <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>SRT文件列表</label>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <Button size="small" type="link" onClick={openUploadModal}>📤上传</Button>
+                            <Button size="small" onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage)} loading={episodeSrtFilesLoading}>刷新</Button>
                           </div>
+                        </div>
+                        {episodeSrtFilesLoading ? (
+                          <Spin tip="加载SRT文件..." />
+                        ) : (
+                          <>
+                            <List
+                              size="small"
+                              dataSource={episodeSrtFiles}
+                              renderItem={(file: ICloudFile) => {
+                                const isSelected = selectedEpisodeSrtFile?.file_id === file.file_id;
+                                return (
+                                  <Card size="small" style={{ marginBottom: 4, background: isSelected ? '#e6f7ff' : '#fff' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div title={file.file_name} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                          {file.file_name}
+                                        </div>
+                                        <div style={{ fontSize: 10, color: '#999' }}>
+                                          {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
+                                        </div>
+                                      </div>
+                                      <Button size="small" type={isSelected ? 'primary' : 'default'} style={{ marginLeft: 8 }}
+                                        onClick={() => { setSelectedEpisodeSrtFile(isSelected ? null : file); if (!isSelected) { setEpisodeFileStep('video'); if (episodeVideoFiles.length === 0) loadEpisodeVideoFiles(); } }}>
+                                        {isSelected ? '已选择' : '选择'}
+                                      </Button>
+                                    </div>
+                                  </Card>
+                                );
+                              }}
+                            />
+                            {episodeSrtFilesTotalPages > 1 && (
+                              <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
+                                <Button size="small" disabled={episodeSrtFilesPage <= 1} onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage - 1)}>上一页</Button>
+                                <span style={{ fontSize: 12, lineHeight: '24px' }}>{episodeSrtFilesPage}/{episodeSrtFilesTotalPages}</span>
+                                <Button size="small" disabled={episodeSrtFilesPage >= episodeSrtFilesTotalPages} onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage + 1)}>下一页</Button>
+                              </div>
+                            )}
+                          </>
                         )}
                       </>
                     )}
-                  </>
-                )}
 
-                {episodeFileStep === 'video' && (
-                  <>
-                    <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>视频文件列表（按大小排序）</label>
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <Button size="small" type="link" onClick={openUploadModal}>📤上传</Button>
-                        <Button size="small" onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage)} loading={episodeVideoFilesLoading}>刷新</Button>
-                      </div>
-                    </div>
-                    {episodeVideoFilesLoading ? (
-                      <Spin tip="加载视频文件..." />
-                    ) : (
+                    {episodeFileStep === 'video' && (
                       <>
-                        <List
-                          size="small"
-                          dataSource={episodeVideoFiles}
-                          renderItem={(file: ICloudFile) => {
-                            const isSelected = selectedEpisodeVideoFile?.file_id === file.file_id;
-                            return (
-                              <Card size="small" style={{ marginBottom: 4, background: isSelected ? '#e6f7ff' : '#fff' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div title={file.file_name} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                      {file.file_name}
-                                    </div>
-                                    <div style={{ fontSize: 10, color: '#999' }}>
-                                      {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
-                                    </div>
-                                  </div>
-                                  <Button size="small" type={isSelected ? 'primary' : 'default'} style={{ marginLeft: 8 }}
-                                    onClick={() => setSelectedEpisodeVideoFile(isSelected ? null : file)}>
-                                    {isSelected ? '已选择' : '选择'}
-                                  </Button>
-                                </div>
-                              </Card>
-                            );
-                          }}
-                        />
-                        {episodeVideoFilesTotalPages > 1 && (
-                          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
-                            <Button size="small" disabled={episodeVideoFilesPage <= 1} onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage - 1)}>上一页</Button>
-                            <span style={{ fontSize: 12, lineHeight: '24px' }}>{episodeVideoFilesPage}/{episodeVideoFilesTotalPages}</span>
-                            <Button size="small" disabled={episodeVideoFilesPage >= episodeVideoFilesTotalPages} onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage + 1)}>下一页</Button>
+                        <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>视频文件列表（按大小排序）</label>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <Button size="small" type="link" onClick={openUploadModal}>📤上传</Button>
+                            <Button size="small" onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage)} loading={episodeVideoFilesLoading}>刷新</Button>
                           </div>
+                        </div>
+                        {episodeVideoFilesLoading ? (
+                          <Spin tip="加载视频文件..." />
+                        ) : (
+                          <>
+                            <List
+                              size="small"
+                              dataSource={episodeVideoFiles}
+                              renderItem={(file: ICloudFile) => {
+                                const isSelected = selectedEpisodeVideoFile?.file_id === file.file_id;
+                                return (
+                                  <Card size="small" style={{ marginBottom: 4, background: isSelected ? '#e6f7ff' : '#fff' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div title={file.file_name} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                          {file.file_name}
+                                        </div>
+                                        <div style={{ fontSize: 10, color: '#999' }}>
+                                          {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
+                                        </div>
+                                      </div>
+                                      <Button size="small" type={isSelected ? 'primary' : 'default'} style={{ marginLeft: 8 }}
+                                        onClick={() => { setSelectedEpisodeVideoFile(isSelected ? null : file); if (!isSelected) setEpisodeFileStep(null); }}>
+                                        {isSelected ? '已选择' : '选择'}
+                                      </Button>
+                                    </div>
+                                  </Card>
+                                );
+                              }}
+                            />
+                            {episodeVideoFilesTotalPages > 1 && (
+                              <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
+                                <Button size="small" disabled={episodeVideoFilesPage <= 1} onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage - 1)}>上一页</Button>
+                                <span style={{ fontSize: 12, lineHeight: '24px' }}>{episodeVideoFilesPage}/{episodeVideoFilesTotalPages}</span>
+                                <Button size="small" disabled={episodeVideoFilesPage >= episodeVideoFilesTotalPages} onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage + 1)}>下一页</Button>
+                              </div>
+                            )}
+                          </>
                         )}
                       </>
                     )}
@@ -1952,29 +2244,6 @@ function LoadApp() {
         return (
           <div>
             <div className="section-title">选择解说模板</div>
-
-            <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
-              <div style={{ flex: 1 }}>
-                <label className="form-label">解说类型</label>
-                <Select style={{ width: '100%' }} value={narratorType} onChange={(v) => { setNarratorType(v); setSelectedTemplate(null); }}
-                  options={[
-                    { label: '电影', value: 'movie' },
-                    { label: '第一人称电影', value: 'first_person_movie' },
-                    { label: '多语种电影', value: 'multilingual' },
-                    { label: '第一人称多语种', value: 'first_person_multilingual' },
-                    { label: '短剧', value: 'short_drama' }
-                  ]}
-                />
-              </div>
-              <div style={{ flex: 1 }}>
-                <label className="form-label">模型版本</label>
-                <Select style={{ width: '100%' }} value={modelVersion} onChange={(v) => { setModelVersion(v); setSelectedTemplate(null); }}
-                  options={[
-                    { label: '标准版 (standard)', value: 'standard' }
-                  ]}
-                />
-              </div>
-            </div>
 
             <div className={`movie-list-scroll ${isCustomTemplate ? 'compact' : ''}`}>
               {templatesLoading ? (
@@ -2030,45 +2299,46 @@ function LoadApp() {
                   )}
                 </div>
 
-                <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>爆款SRT文件列表</label>
-                  <Button size="small" onClick={() => loadViralSrtFiles(viralSrtFilesPage)} loading={viralSrtFilesLoading}>刷新</Button>
-                </div>
-                {viralSrtFilesLoading ? (
-                  <Spin tip="加载爆款SRT文件..." />
-                ) : (
+                {!selectedViralSrtFile && (
                   <>
-                    <List
-                      size="small"
-                      dataSource={viralSrtFiles}
-                      renderItem={(file: ICloudFile) => {
-                        const isSelected = selectedViralSrtFile?.file_id === file.file_id;
-                        return (
-                          <Card size="small" style={{ marginBottom: 4, background: isSelected ? '#e6f7ff' : '#fff' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div title={file.file_name} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {file.file_name}
+                    <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>爆款SRT文件列表</label>
+                      <Button size="small" onClick={() => loadViralSrtFiles(viralSrtFilesPage)} loading={viralSrtFilesLoading}>刷新</Button>
+                    </div>
+                    {viralSrtFilesLoading ? (
+                      <Spin tip="加载爆款SRT文件..." />
+                    ) : (
+                      <>
+                        <List
+                          size="small"
+                          dataSource={viralSrtFiles}
+                          renderItem={(file: ICloudFile) => (
+                              <Card size="small" style={{ marginBottom: 4 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div title={file.file_name} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {file.file_name}
+                                    </div>
+                                    <div style={{ fontSize: 10, color: '#999' }}>
+                                      {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
+                                    </div>
+                                  </div>
+                                  <Button size="small" style={{ marginLeft: 8 }}
+                                    onClick={() => setSelectedViralSrtFile(file)}>
+                                    选择
+                                  </Button>
                                 </div>
-                                <div style={{ fontSize: 10, color: '#999' }}>
-                                  {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
-                                </div>
-                              </div>
-                              <Button size="small" type={isSelected ? 'primary' : 'default'} style={{ marginLeft: 8 }}
-                                onClick={() => setSelectedViralSrtFile(isSelected ? null : file)}>
-                                {isSelected ? '已选择' : '选择'}
-                              </Button>
-                            </div>
-                          </Card>
-                        );
-                      }}
-                    />
-                    {viralSrtFilesTotalPages > 1 && (
-                      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
-                        <Button size="small" disabled={viralSrtFilesPage <= 1} onClick={() => loadViralSrtFiles(viralSrtFilesPage - 1)}>上一页</Button>
-                        <span style={{ fontSize: 12, lineHeight: '24px' }}>{viralSrtFilesPage}/{viralSrtFilesTotalPages}</span>
-                        <Button size="small" disabled={viralSrtFilesPage >= viralSrtFilesTotalPages} onClick={() => loadViralSrtFiles(viralSrtFilesPage + 1)}>下一页</Button>
-                      </div>
+                              </Card>
+                          )}
+                        />
+                        {viralSrtFilesTotalPages > 1 && (
+                          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
+                            <Button size="small" disabled={viralSrtFilesPage <= 1} onClick={() => loadViralSrtFiles(viralSrtFilesPage - 1)}>上一页</Button>
+                            <span style={{ fontSize: 12, lineHeight: '24px' }}>{viralSrtFilesPage}/{viralSrtFilesTotalPages}</span>
+                            <Button size="small" disabled={viralSrtFilesPage >= viralSrtFilesTotalPages} onClick={() => loadViralSrtFiles(viralSrtFilesPage + 1)}>下一页</Button>
+                          </div>
+                        )}
+                      </>
                     )}
                   </>
                 )}
@@ -2089,45 +2359,46 @@ function LoadApp() {
                   )}
                 </div>
 
-                <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>爆款视频文件列表</label>
-                  <Button size="small" onClick={() => loadViralVideoFiles(viralVideoFilesPage)} loading={viralVideoFilesLoading}>刷新</Button>
-                </div>
-                {viralVideoFilesLoading ? (
-                  <Spin tip="加载爆款视频文件..." />
-                ) : (
+                {!selectedViralVideoFile && (
                   <>
-                    <List
-                      size="small"
-                      dataSource={viralVideoFiles}
-                      renderItem={(file: ICloudFile) => {
-                        const isSelected = selectedViralVideoFile?.file_id === file.file_id;
-                        return (
-                          <Card size="small" style={{ marginBottom: 4, background: isSelected ? '#f9f0ff' : '#fff' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div title={file.file_name} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {file.file_name}
+                    <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>爆款视频文件列表</label>
+                      <Button size="small" onClick={() => loadViralVideoFiles(viralVideoFilesPage)} loading={viralVideoFilesLoading}>刷新</Button>
+                    </div>
+                    {viralVideoFilesLoading ? (
+                      <Spin tip="加载爆款视频文件..." />
+                    ) : (
+                      <>
+                        <List
+                          size="small"
+                          dataSource={viralVideoFiles}
+                          renderItem={(file: ICloudFile) => (
+                              <Card size="small" style={{ marginBottom: 4 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div title={file.file_name} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {file.file_name}
+                                    </div>
+                                    <div style={{ fontSize: 10, color: '#999' }}>
+                                      {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
+                                    </div>
+                                  </div>
+                                  <Button size="small" style={{ marginLeft: 8 }}
+                                    onClick={() => setSelectedViralVideoFile(file)}>
+                                    选择
+                                  </Button>
                                 </div>
-                                <div style={{ fontSize: 10, color: '#999' }}>
-                                  {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
-                                </div>
-                              </div>
-                              <Button size="small" type={isSelected ? 'primary' : 'default'} style={{ marginLeft: 8 }}
-                                onClick={() => setSelectedViralVideoFile(isSelected ? null : file)}>
-                                {isSelected ? '已选择' : '选择'}
-                              </Button>
-                            </div>
-                          </Card>
-                        );
-                      }}
-                    />
-                    {viralVideoFilesTotalPages > 1 && (
-                      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
-                        <Button size="small" disabled={viralVideoFilesPage <= 1} onClick={() => loadViralVideoFiles(viralVideoFilesPage - 1)}>上一页</Button>
-                        <span style={{ fontSize: 12, lineHeight: '24px' }}>{viralVideoFilesPage}/{viralVideoFilesTotalPages}</span>
-                        <Button size="small" disabled={viralVideoFilesPage >= viralVideoFilesTotalPages} onClick={() => loadViralVideoFiles(viralVideoFilesPage + 1)}>下一页</Button>
-                      </div>
+                              </Card>
+                          )}
+                        />
+                        {viralVideoFilesTotalPages > 1 && (
+                          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
+                            <Button size="small" disabled={viralVideoFilesPage <= 1} onClick={() => loadViralVideoFiles(viralVideoFilesPage - 1)}>上一页</Button>
+                            <span style={{ fontSize: 12, lineHeight: '24px' }}>{viralVideoFilesPage}/{viralVideoFilesTotalPages}</span>
+                            <Button size="small" disabled={viralVideoFilesPage >= viralVideoFilesTotalPages} onClick={() => loadViralVideoFiles(viralVideoFilesPage + 1)}>下一页</Button>
+                          </div>
+                        )}
+                      </>
                     )}
                   </>
                 )}
@@ -2174,7 +2445,7 @@ function LoadApp() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <label className="form-label" style={{ marginBottom: 0 }}>选择BGM</label>
                     {selectedBGM && !bgmListExpanded && (
-                      <Button size="small" type="link" onClick={() => setBgmListExpanded(true)}>重新选择</Button>
+                      <Button size="small" type="link" onClick={() => { setBgmListExpanded(true); if (selectedBGM.name === '自定义') loadCustomBgmFiles(); }}>重新选择</Button>
                     )}
                   </div>
                   {selectedBGM && !bgmListExpanded ? (
@@ -2444,8 +2715,20 @@ function LoadApp() {
             {taskPhase === 'idle' && (
               <div>
                 <div className="confirm-card">
-                  <p><strong>电影:</strong> {selectedMovie?.name === '自定义' ? '自定义电影' : selectedMovie?.name}</p>
-                  {isCustomMovie && (
+                  <p><strong>影片:</strong> {selectedMovie?.name === '自定义' ? (customMovieName || '自定义影片') : selectedMovie?.name}</p>
+                  <p><strong>解说类型:</strong> {{ movie: '电影', first_person_movie: '第一人称电影', multilingual: '多语种电影', first_person_multilingual: '第一人称多语种', short_drama: '短剧' }[narratorType] || narratorType}</p>
+                  <p><strong>模型版本:</strong> 标准版</p>
+                  {isCustomMovie && isShortDrama && (
+                    <>
+                      <p className="hint">剧集对数: {episodePairs.length}</p>
+                      {episodePairs.map((pair, i) => (
+                        <p key={i} className="hint" style={{ fontSize: 11 }}>
+                          #{i + 1}: {pair.srt.file_name} + {pair.video.file_name}
+                        </p>
+                      ))}
+                    </>
+                  )}
+                  {isCustomMovie && !isShortDrama && (
                     <>
                       <p className="hint">剧集SRT: {selectedEpisodeSrtFile?.file_name}</p>
                       {selectedEpisodeVideoFile && <p className="hint">剧集视频: {selectedEpisodeVideoFile.file_name}</p>}
@@ -2462,8 +2745,6 @@ function LoadApp() {
                     <>
                       <p className="hint">爆款SRT: {selectedViralSrtFile?.file_name}</p>
                       {selectedViralVideoFile && <p className="hint">爆款视频: {selectedViralVideoFile.file_name}</p>}
-                      <p><strong>解说类型:</strong> {{ movie: '电影', first_person_movie: '第一人称电影', multilingual: '多语种电影', first_person_multilingual: '第一人称多语种', short_drama: '短剧' }[narratorType] || narratorType}</p>
-                      <p><strong>模型版本:</strong> 标准版</p>
                       <p className="hint" style={{ color: '#eb2f96' }}>将先生成爆款模型，再自动创建文案</p>
                     </>
                   ) : (
@@ -2528,7 +2809,13 @@ function LoadApp() {
   // 检查是否可以进入下一步
   const canGoNext = () => {
     switch (currentStep) {
-      case 0: return isCustomMovie ? (!!selectedMovie && !!customMovieName.trim() && !!selectedEpisodeSrtFile && !!selectedEpisodeVideoFile) : !!selectedMovie;
+      case 0: {
+        if (!selectedMovie) return false;
+        if (!isCustomMovie) return true;
+        if (!customMovieName.trim()) return false;
+        if (isShortDrama) return episodePairs.length > 0;
+        return !!selectedEpisodeSrtFile && !!selectedEpisodeVideoFile;
+      }
       case 1: {
         if (!selectedTemplate) return false;
         if (selectedTemplate.name === '自定义') return !!selectedViralSrtFile;
@@ -2737,24 +3024,52 @@ function LoadApp() {
                   {task.type === 'viral_learn' && (
                     <div><strong>🧠 模型ID:</strong> {task.result?.api_response?.data?.results?.order_info?.learning_model_id || '未知'}</div>
                   )}
-                  {task.type === 'script' && (
-                    <div><strong>📄 文案文件:</strong> {task.result?.api_response?.data?.results?.tasks?.[0]?.task_result || '未知'}</div>
+                  {task.type === 'video' && task.result?.api_response?.data?.results?.tasks?.[0]?.video_url && (
+                    <div><strong>🎬 视频地址:</strong> {task.result.api_response.data.results.tasks[0].video_url}</div>
                   )}
-                  {task.type === 'clip' && (
-                    <div><strong>📄 剪辑脚本:</strong> {(() => {
-                      try {
-                        const taskResult = task.result?.api_response?.data?.results?.tasks?.[0]?.task_result;
-                        if (typeof taskResult === 'string') {
-                          const parsed = JSON.parse(taskResult);
-                          return parsed.clip_data_file || taskResult;
-                        }
-                        return taskResult || '未知';
-                      } catch { return task.result?.api_response?.data?.results?.tasks?.[0]?.task_result || '未知'; }
-                    })()}</div>
+                  {task.result?.api_response?.data?.consumed_points > 0 && (
+                    <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>消耗点数: {task.result.api_response.data.consumed_points}</div>
                   )}
-                  {task.type === 'video' && (
-                    <div><strong>🎬 视频地址:</strong> {task.result?.api_response?.data?.results?.tasks?.[0]?.video_url || '未知'}</div>
-                  )}
+                  {(() => {
+                    const files = task.result?.api_response?.data?.files;
+                    if (!Array.isArray(files) || files.length === 0) return null;
+                    return (
+                      <div style={{ marginTop: 4 }}>
+                        <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>📎 产物文件 ({files.length})</div>
+                        {files.map((f: any, fi: number) => (
+                          <div key={fi} className="task-file-item">
+                            <div className="task-file-info">
+                              <span className="task-file-name" title={f.file_path || f.file_name}>{f.original_name || f.file_name}</span>
+                              <span className="task-file-meta">{f.suffix} | {(Number(f.file_size) / 1024).toFixed(1)}KB</span>
+                            </div>
+                            <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+                              {task.type !== 'viral_learn' && f.file_id && (
+                                <Button size="small" type="link" style={{ fontSize: 11, padding: '0 4px' }}
+                                  loading={downloadingFileId === f.file_id}
+                                  onClick={async () => {
+                                    try {
+                                      setDownloadingFileId(f.file_id);
+                                      const url = await fetchFileDownloadUrl(appKey, f.file_id);
+                                      window.open(url, '_blank');
+                                    } catch (err: any) {
+                                      message.error(err.message || '获取下载地址失败');
+                                    } finally {
+                                      setDownloadingFileId(null);
+                                    }
+                                  }}>
+                                  下载
+                                </Button>
+                              )}
+                              <Button size="small" type="link" style={{ fontSize: 11, padding: '0 4px' }}
+                                onClick={() => { navigator.clipboard.writeText(f.file_id || f.file_path); message.success('已复制文件ID'); }}>
+                                复制ID
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
               {task.status === 'wait_confirm' && (

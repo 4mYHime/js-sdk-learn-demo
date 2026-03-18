@@ -51,6 +51,7 @@ export interface IOrder {
   narratorType: string;
   modelVersion: string;
   learningModelId: string;
+  episodesData: Array<{ num: number; srt_oss_key: string; video_oss_key: string; negative_oss_key: string }>;
   status: OrderStatus;
   createdAt: number;
   updatedAt: number;
@@ -192,6 +193,7 @@ export function createOrder(params: {
   viralSrtPath?: string;
   narratorType?: string;
   modelVersion?: string;
+  episodesData?: Array<{ num: number; srt_oss_key: string; video_oss_key: string; negative_oss_key: string }>;
 }): IOrder {
   const order: IOrder = {
     id: generateOrderId(),
@@ -217,6 +219,7 @@ export function createOrder(params: {
     narratorType: params.narratorType || '',
     modelVersion: params.modelVersion || '',
     learningModelId: '',
+    episodesData: params.episodesData || [],
     status: 'pending',
     createdAt: Date.now(),
     updatedAt: Date.now(),

@@ -305,6 +305,39 @@ body {
   color: #389e0d;
 }
 
+/* 产物文件列表 */
+.task-file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  margin-bottom: 3px;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 6px;
+  border: 1px solid #e8e8e8;
+}
+
+.task-file-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.task-file-name {
+  display: block;
+  font-size: 11px;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-file-meta {
+  display: block;
+  font-size: 10px;
+  color: #999;
+}
+
 /* 待确认区块 */
 .task-confirm-block {
   margin-top: 10px;

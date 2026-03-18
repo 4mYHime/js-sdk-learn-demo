@@ -113,6 +113,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/order_api/, ''),
       },
+      '/api/file_download': {
+        target: 'https://rkf588fr4n.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/file_download/, ''),
+      },
     },
   }
 })
