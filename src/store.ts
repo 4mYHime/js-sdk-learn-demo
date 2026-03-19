@@ -82,6 +82,7 @@ export function setCurrentUser(appKey: string): void {
 // 登出
 export function logout(): void {
   localStorage.removeItem(USER_KEY);
+  localStorage.removeItem(STORAGE_KEY);
 }
 
 // 获取所有订单
@@ -125,7 +126,7 @@ export function updateOrderStatus(orderId: string, status: OrderStatus, errorMes
   if (order) {
     order.status = status;
     order.updatedAt = Date.now();
-    if (errorMessage) {
+    if (errorMessage !== undefined) {
       order.errorMessage = errorMessage;
     }
     const orders = getAllOrders();

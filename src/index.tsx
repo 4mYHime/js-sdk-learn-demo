@@ -346,10 +346,6 @@ function LoadApp() {
       setLoginError('请输入App Key');
       return;
     }
-    if (!appKey.startsWith('grid_')) {
-      setLoginError('App Key格式不正确，应以grid_开头');
-      return;
-    }
     setCurrentUser(appKey);
     setOrders(getUserOrders(appKey));
     setPage('orders');
@@ -364,12 +360,41 @@ function LoadApp() {
     });
   };
   
-  // 登出
+  // 登出：清除所有用户相关状态，防止下一个用户看到上个用户的数据
   const handleLogout = () => {
+    // 中断正在进行的工作流轮询
+    if (abortRef.current) abortRef.current.aborted = true;
+    pollingRef.current = false;
+    // 清除存储
     logout();
+    // 清除核心状态
     setAppKey('');
     setOrders([]);
     setPage('login');
+    setCurrentOrder(null);
+    // 清除用户信息
+    setUserInfo(null);
+    setCloudDriveUsage(null);
+    // 清除创建订单流程中的状态
+    setCurrentStep(0);
+    setSelectedMovie(null);
+    setSelectedTemplate(null);
+    setSelectedBGM(null);
+    setSelectedDubbing(null);
+    setMovies([]);
+    setTemplates([]);
+    setBgmList([]);
+    setDubbingList([]);
+    setCustomMovieName('');
+    setEpisodePairs([]);
+    setSelectedEpisodeSrtFile(null);
+    setSelectedEpisodeVideoFile(null);
+    setSelectedViralSrtFile(null);
+    setSelectedViralVideoFile(null);
+    setSelectedCustomBgmFile(null);
+    setCustomDubbingText('');
+    setErrorMessage('');
+    setLoginError('');
   };
   
   // 手动刷新订单状态
@@ -785,8 +810,9 @@ function LoadApp() {
           if (order.episodesData?.length > 0) {
             // 优先使用订单中存储的 episodesData（支持短剧多集对）
             episodesData = order.episodesData;
-          } else if (order.templateSource === 'generate') {
-            // 自定义电影：从订单数据构建
+          } else if (order.movieSource === 'custom' || order.templateSource === 'generate') {
+            // 自定义电影或自定义模板：从订单存储的文件路径构建
+            if (!order.videoSrtPath) throw new Error('缺少字幕文件路径，无法重试。请重新创建订单');
             episodesData = [{
               num: 1,
               srt_oss_key: order.videoSrtPath,
@@ -798,6 +824,7 @@ function LoadApp() {
             const movies = await fetchMovies(order.appKey);
             const movie = movies.find(m => m.id === order.movieId);
             if (!movie) throw new Error('无法找到电影数据，请重新创建订单');
+            if (!movie.srt_file_id || movie.srt_file_id === 'else') throw new Error('该电影缺少有效的字幕文件，请重新创建订单');
             episodesData = [{
               num: 1,
               srt_oss_key: movie.srt_file_id,
@@ -880,6 +907,86 @@ function LoadApp() {
       setRetryingTaskType(null);
     }
   }, [resumeOrderWorkflow, appKey]);
+
+  // 重试订单（订单创建时首个任务API调用失败，tasks为空的情况）
+  const [retryingOrder, setRetryingOrder] = useState(false);
+  const retryOrderCreation = useCallback(async (orderId: string) => {
+    const order = getOrder(orderId);
+    if (!order || order.tasks.length > 0) return;
+
+    setRetryingOrder(true);
+    try {
+      if (order.templateSource === 'generate') {
+        // 自定义模板：创建爆款模型任务
+        updateOrderStatus(orderId, 'viral_learn', '');
+        setCurrentOrder(getOrder(orderId));
+
+        const viralResponse = await generateViralModel({
+          app_key: order.appKey,
+          video_srt_path: order.viralSrtPath || order.videoSrtPath,
+          ...(order.videoPath ? { video_path: order.videoPath } : {}),
+          narrator_type: order.narratorType,
+          model_version: order.modelVersion
+        });
+
+        const viralTask: ITask = {
+          type: 'viral_learn', taskId: viralResponse.task_id, orderNum: '',
+          status: 'running', pollCount: 0, elapsedTime: 0,
+          result: null, errorMessage: '', createdAt: Date.now(), completedAt: null
+        };
+        updateOrderTask(orderId, viralTask);
+      } else {
+        // 使用现成模板：创建文案任务
+        updateOrderStatus(orderId, 'script', '');
+        setCurrentOrder(getOrder(orderId));
+
+        const episodesData = order.episodesData?.length > 0
+          ? order.episodesData
+          : [{
+              num: 1,
+              srt_oss_key: order.videoSrtPath,
+              video_oss_key: order.videoPath || order.videoSrtPath,
+              negative_oss_key: order.videoPath || order.videoSrtPath
+            }];
+
+        const scriptResponse = await generateScript({
+          app_key: order.appKey,
+          learning_model_id: order.templateId,
+          episodes_data: episodesData,
+          playlet_name: order.movieName,
+          playlet_num: episodesData.map(e => e.num).join(','),
+          target_platform: order.targetPlatform,
+          task_count: 1,
+          target_character_name: order.targetCharacterName || '主角',
+          refine_srt_gaps: "0",
+          vendor_requirements: order.vendorRequirements || `投放在${order.targetPlatform}，吸引18-35岁的年轻用户观看。`,
+          story_info: order.storyInfo || ''
+        });
+
+        const scriptTask: ITask = {
+          type: 'script', taskId: scriptResponse.task_id, orderNum: '',
+          status: 'running', pollCount: 0, elapsedTime: 0,
+          result: null, errorMessage: '', createdAt: Date.now(), completedAt: null
+        };
+        updateOrderTask(orderId, scriptTask);
+      }
+
+      setCurrentOrder(getOrder(orderId));
+      resumeOrderWorkflow(orderId);
+    } catch (error: any) {
+      console.error('重试订单失败:', error);
+      let errMsg = '重试失败';
+      if (error.response) {
+        errMsg = `${error.message}\n状态码: ${error.response.status}\n响应: ${JSON.stringify(error.response.data || {}).slice(0, 200)}`;
+      } else if (error.message) {
+        errMsg = error.message;
+      }
+      updateOrderStatus(orderId, 'error', errMsg);
+      setCurrentOrder(getOrder(orderId));
+    } finally {
+      setRetryingOrder(false);
+    }
+  }, [resumeOrderWorkflow]);
   
   // 开始创建新订单
   const startCreateOrder = () => {
@@ -2840,7 +2947,7 @@ function LoadApp() {
         <div style={{ marginBottom: 16 }}>
           <Input
             size="large"
-            placeholder="请输入App Key (grid_xxx)"
+            placeholder="请输入App Key"
             value={appKey}
             onChange={(e) => setAppKey(e.target.value)}
             onPressEnter={handleLogin}
@@ -3001,7 +3108,21 @@ function LoadApp() {
         
         <div className="task-section-title">📋 任务进度</div>
         {currentOrder.tasks.length === 0 ? (
-          <div style={{ color: '#999', fontSize: 12 }}>暂无任务记录</div>
+          <div>
+            <div style={{ color: '#999', fontSize: 12, marginBottom: 8 }}>暂无任务记录</div>
+            {currentOrder.status === 'error' && (
+              <Button
+                type="primary"
+                danger
+                size="small"
+                style={{ borderRadius: 8 }}
+                loading={retryingOrder}
+                onClick={() => retryOrderCreation(currentOrder.id)}
+              >
+                🔄 重试订单
+              </Button>
+            )}
+          </div>
         ) : (
           currentOrder.tasks.map((task, idx) => (
             <div key={idx} className="task-card">
