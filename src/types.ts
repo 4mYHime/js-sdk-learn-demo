@@ -311,6 +311,67 @@ export interface IWorkflowState {
   videoUrl: string | null;
 }
 
+// 电影搜索结果
+export interface IMovieSearchResult {
+  year: string;
+  genre: string;
+  stars: string[];
+  title: string;
+  summary: string;
+  director: string;
+  local_title: string;
+  original_title?: string;
+  poster_url?: string;
+  is_partial?: boolean;
+}
+
+// 原创文案请求
+export interface IOriginalScriptRequest {
+  app_key: string;
+  model: 'flash' | 'standard';
+  language: string;
+  perspective: string;
+  target_mode: '1' | '2' | '3';
+  learning_srt: string;
+  playlet_name: string;
+  episodes_data: Array<{ num: number; srt_oss_key: string }>;
+  learning_model_id: string | null;
+  confirmed_movie_json: IMovieSearchResult | null;
+  target_character_name: string;
+}
+
+// 原创文案剪辑请求
+export interface IOriginalClipRequest {
+  app_key: string;
+  bgm: string;
+  dubbing: string;
+  file_id: string;
+  task_id: string;
+  font_path: string | null;
+  custom_cover: string;
+  dubbing_type: string;
+  episodes_data: Array<{
+    num: number;
+    srt_oss_key: string;
+    video_oss_key: string;
+    negative_oss_key: string;
+  }>;
+  subtitle_style: {
+    shadow: string | null;
+    outline: string | null;
+    fontname: string | null;
+    fontsize: string | null;
+    margin_l: string | null;
+    margin_r: string | null;
+    margin_v: string | null;
+    alignment: string | null;
+    back_colour: string | null;
+    border_style: string | null;
+    outline_colour: string | null;
+    primary_colour: string | null;
+  };
+}
+
 // 预估点数请求
 export interface IEstimatePointsRequest {
   app_key: string;

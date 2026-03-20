@@ -1,12 +1,12 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Steps, Button, Card, List, Avatar, Alert, Select, Input, Spin, Result, Tag, Empty, Radio, message, Tooltip } from 'antd';
-import { IMovie, INarratorTemplate, IBGM, IDubbing, IEpisodeData, ICloudFile, IPreUploadFile, IPreUploadResponse, IEstimatePointsResponse } from './types';
+import { IMovie, INarratorTemplate, IBGM, IDubbing, IEpisodeData, ICloudFile, IPreUploadFile, IPreUploadResponse, IEstimatePointsResponse, IMovieSearchResult } from './types';
 import { fetchMovies } from './api/movies';
 import { fetchTemplates } from './api/templates';
 import { fetchBGMList } from './api/bgm';
 import { fetchDubbingList } from './api/dubbing';
-import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete, preUpload, uploadTask, fetchTransferList, deleteFile, updatePreFile, fetchUserBalance, fetchCloudDriveUsage, estimatePoints, fetchFileDownloadUrl } from './api/tasks';
+import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete, preUpload, uploadTask, fetchTransferList, deleteFile, updatePreFile, fetchUserBalance, fetchCloudDriveUsage, estimatePoints, fetchFileDownloadUrl, generateOriginalScript, generateOriginalClip, searchMovies } from './api/tasks';
 import {
   IOrder, ITask, TaskType, OrderStatus, DeliveryMode,
   getCurrentUser, setCurrentUser, logout,
@@ -79,7 +79,33 @@ function LoadApp() {
   const [selectedViralVideoFile, setSelectedViralVideoFile] = useState<ICloudFile | null>(null);
   const [narratorType, setNarratorType] = useState('movie');
   const [modelVersion, setModelVersion] = useState('standard');
-  
+
+  // 原创文案相关状态
+  const [copywritingType, setCopywritingType] = useState<'secondary' | 'original'>('secondary');
+  const [originalMode, setOriginalMode] = useState<'2' | '3'>('3');
+  const [originalLanguage, setOriginalLanguage] = useState('中文');
+  const [originalModel, setOriginalModel] = useState<'flash' | 'standard'>('flash');
+  const [movieSearchQuery, setMovieSearchQuery] = useState('');
+  const [movieSearchLoading, setMovieSearchLoading] = useState(false);
+  const [movieSearchResults, setMovieSearchResults] = useState<IMovieSearchResult[]>([]);
+  const [movieSearchModalVisible, setMovieSearchModalVisible] = useState(false);
+  const [confirmedMovieJson, setConfirmedMovieJson] = useState<IMovieSearchResult | null>(null);
+
+  // 搜索电影信息（原创文案 + 自定义电影时使用）
+  const handleSearchMovies = useCallback(async (query: string) => {
+    if (!query.trim()) return;
+    setMovieSearchLoading(true);
+    setMovieSearchResults([]);
+    try {
+      const results = await searchMovies(appKey, query.trim());
+      setMovieSearchResults(results);
+    } catch (err: any) {
+      message.error(err?.message || '搜索电影失败');
+    } finally {
+      setMovieSearchLoading(false);
+    }
+  }, [appKey]);
+
   // Step 2: BGM和配音数据
   const [bgmList, setBgmList] = useState<IBGM[]>([]);
   const [dubbingList, setDubbingList] = useState<IDubbing[]>([]);
@@ -487,8 +513,8 @@ function LoadApp() {
             break;
           }
           
-          // 分段式交付：viral_learn/script/clip 完成后暂停，等待用户确认
-          if (order.deliveryMode === 'staged' && (runningTask.type === 'viral_learn' || runningTask.type === 'script' || runningTask.type === 'clip')) {
+          // 分段式交付：viral_learn/script/clip/original_script/original_clip 完成后暂停，等待用户确认
+          if (order.deliveryMode === 'staged' && (runningTask.type === 'viral_learn' || runningTask.type === 'script' || runningTask.type === 'clip' || runningTask.type === 'original_script' || runningTask.type === 'original_clip')) {
             updateOrderTask(orderId, {
               ...latestTask,
               orderNum: orderNum,
@@ -510,6 +536,8 @@ function LoadApp() {
         const scriptTask = order.tasks.find(t => t.type === 'script');
         const clipTask = order.tasks.find(t => t.type === 'clip');
         const videoTask = order.tasks.find(t => t.type === 'video');
+        const originalScriptTask = order.tasks.find(t => t.type === 'original_script');
+        const originalClipTask = order.tasks.find(t => t.type === 'original_clip');
         
         if (viralLearnTask?.status === 'done' && !scriptTask) {
           // viral_learn完成，script未创建 → 提取learning_model_id，创建script
@@ -635,6 +663,78 @@ function LoadApp() {
           setCurrentOrder(getOrder(orderId));
           continue; // 回到循环顶部轮询video
           
+        // === 原创文案流程 ===
+        } else if (originalScriptTask?.status === 'done' && !originalClipTask) {
+          // original_script完成，original_clip未创建 → 创建original_clip
+          // 从原创文案任务产物中提取file_id：优先 data.files[0].file_id，其次 task_result
+          const osData = originalScriptTask.result?.api_response?.data;
+          let origFileId = osData?.files?.[0]?.file_id || '';
+          if (!origFileId) {
+            const tr = osData?.results?.tasks?.[0]?.task_result || '';
+            if (typeof tr === 'string' && tr.startsWith('{')) {
+              try { const p = JSON.parse(tr); origFileId = p.file_id || p.clip_data_file || tr; } catch { origFileId = tr; }
+            } else { origFileId = tr; }
+          }
+          console.log('创建原创剪辑任务，文案任务ID:', originalScriptTask.taskId, 'file_id:', origFileId);
+          updateOrderStatus(orderId, 'original_clip');
+          setCurrentOrder(getOrder(orderId));
+
+          const ocEpisodesData = order.episodesData?.length > 0
+            ? order.episodesData
+            : [{ num: 1, srt_oss_key: order.videoSrtPath, video_oss_key: order.videoPath || '', negative_oss_key: order.videoPath || '' }];
+
+          const ocResponse = await generateOriginalClip({
+            app_key: order.appKey,
+            bgm: order.bgmId,
+            dubbing: order.dubbingId,
+            file_id: origFileId,
+            task_id: originalScriptTask.taskId,
+            font_path: null,
+            custom_cover: '',
+            dubbing_type: 'default',
+            episodes_data: ocEpisodesData,
+            subtitle_style: {
+              shadow: null, outline: null, fontname: null, fontsize: null,
+              margin_l: null, margin_r: null, margin_v: null, alignment: null,
+              back_colour: null, border_style: null, outline_colour: null, primary_colour: null
+            }
+          });
+
+          const newOcTask: ITask = {
+            type: 'original_clip', taskId: ocResponse.task_id, orderNum: '',
+            status: 'running', pollCount: 0, elapsedTime: 0,
+            result: null, errorMessage: '', createdAt: Date.now(), completedAt: null
+          };
+          updateOrderTask(orderId, newOcTask);
+          setCurrentOrder(getOrder(orderId));
+          continue;
+
+        } else if (originalClipTask?.status === 'done' && !videoTask) {
+          // original_clip完成，video未创建 → 创建video
+          if (!originalClipTask.orderNum) {
+            console.error('original_clip任务缺少orderNum，无法创建video');
+            updateOrderStatus(orderId, 'error', '原创剪辑任务缺少订单号(orderNum)，请重新创建订单');
+            setCurrentOrder(getOrder(orderId));
+            break;
+          }
+          console.log('创建视频任务（原创流程），订单号:', originalClipTask.orderNum);
+          updateOrderStatus(orderId, 'video');
+          setCurrentOrder(getOrder(orderId));
+
+          const ocVideoResponse = await synthesizeVideo({
+            order_num: originalClipTask.orderNum,
+            app_key: order.appKey
+          });
+
+          const newOcVideoTask: ITask = {
+            type: 'video', taskId: ocVideoResponse.task_id, orderNum: '',
+            status: 'running', pollCount: 0, elapsedTime: 0,
+            result: null, errorMessage: '', createdAt: Date.now(), completedAt: null
+          };
+          updateOrderTask(orderId, newOcVideoTask);
+          setCurrentOrder(getOrder(orderId));
+          continue; // 回到循环顶部轮询video
+
         } else if (videoTask?.status === 'done') {
           // 所有任务完成
           const videoUrl = videoTask.result?.api_response?.data?.results?.tasks?.[0]?.video_url || '';
@@ -782,7 +882,9 @@ function LoadApp() {
       viral_learn: 'viral_learn',
       script: 'script',
       clip: 'clip',
-      video: 'video'
+      video: 'video',
+      original_script: 'original_script',
+      original_clip: 'original_clip'
     };
     order.errorMessage = '';
     order.status = statusMap[taskType];
@@ -808,10 +910,8 @@ function LoadApp() {
         case 'script': {
           let episodesData: IEpisodeData[];
           if (order.episodesData?.length > 0) {
-            // 优先使用订单中存储的 episodesData（支持短剧多集对）
             episodesData = order.episodesData;
           } else if (order.movieSource === 'custom' || order.templateSource === 'generate') {
-            // 自定义电影或自定义模板：从订单存储的文件路径构建
             if (!order.videoSrtPath) throw new Error('缺少字幕文件路径，无法重试。请重新创建订单');
             episodesData = [{
               num: 1,
@@ -820,7 +920,6 @@ function LoadApp() {
               negative_oss_key: order.videoPath || order.videoSrtPath
             }];
           } else {
-            // 普通电影：需要重新获取电影文件ID
             const movies = await fetchMovies(order.appKey);
             const movie = movies.find(m => m.id === order.movieId);
             if (!movie) throw new Error('无法找到电影数据，请重新创建订单');
@@ -850,6 +949,63 @@ function LoadApp() {
           newTaskId = scriptResponse.task_id;
           break;
         }
+        case 'original_script': {
+          const learningSrt = order.viralSrtPath || order.videoSrtPath;
+          if (!learningSrt) throw new Error('缺少SRT文件，无法重试原创文案任务');
+          const osEpisodesData = order.episodesData?.length > 0
+            ? order.episodesData.map(e => ({ num: e.num, srt_oss_key: e.srt_oss_key }))
+            : [{ num: 1, srt_oss_key: order.videoSrtPath }];
+          const osLearningModelId = order.templateSource === 'generate' ? null : (order.templateId || null);
+          const osResponse = await generateOriginalScript({
+            app_key: order.appKey,
+            model: order.originalModel || 'flash',
+            language: order.originalLanguage || '中文',
+            perspective: 'third_person',
+            target_mode: (order.originalMode as '1' | '2' | '3') || '3',
+            learning_srt: learningSrt,
+            playlet_name: order.movieName,
+            episodes_data: osEpisodesData,
+            learning_model_id: osLearningModelId,
+            confirmed_movie_json: order.confirmedMovieJson || null,
+            target_character_name: order.targetCharacterName || '主角名'
+          });
+          newTaskId = osResponse.task_id;
+          break;
+        }
+        case 'original_clip': {
+          const origScriptTask = order.tasks.find(t => t.type === 'original_script' && t.status === 'done');
+          if (!origScriptTask?.taskId) throw new Error('缺少原创文案任务ID，无法重试原创剪辑');
+          // 从原创文案任务产物中提取file_id
+          const retryOsData = origScriptTask.result?.api_response?.data;
+          let origScriptFileId = retryOsData?.files?.[0]?.file_id || '';
+          if (!origScriptFileId) {
+            const tr = retryOsData?.results?.tasks?.[0]?.task_result || '';
+            if (typeof tr === 'string' && tr.startsWith('{')) {
+              try { const p = JSON.parse(tr); origScriptFileId = p.file_id || p.clip_data_file || tr; } catch { origScriptFileId = tr; }
+            } else { origScriptFileId = tr; }
+          }
+          const ocEpisodesData = order.episodesData?.length > 0
+            ? order.episodesData
+            : [{ num: 1, srt_oss_key: order.videoSrtPath, video_oss_key: order.videoPath || '', negative_oss_key: order.videoPath || '' }];
+          const ocResponse = await generateOriginalClip({
+            app_key: order.appKey,
+            bgm: order.bgmId,
+            dubbing: order.dubbingId,
+            file_id: origScriptFileId,
+            task_id: origScriptTask.taskId,
+            font_path: null,
+            custom_cover: '',
+            dubbing_type: 'default',
+            episodes_data: ocEpisodesData,
+            subtitle_style: {
+              shadow: null, outline: null, fontname: null, fontsize: null,
+              margin_l: null, margin_r: null, margin_v: null, alignment: null,
+              back_colour: null, border_style: null, outline_colour: null, primary_colour: null
+            }
+          });
+          newTaskId = ocResponse.task_id;
+          break;
+        }
         case 'clip': {
           const scriptTask = order.tasks.find(t => t.type === 'script' && t.status === 'done');
           if (!scriptTask?.orderNum) throw new Error('缺少文案任务订单号，无法重试剪辑');
@@ -870,7 +1026,7 @@ function LoadApp() {
           break;
         }
         case 'video': {
-          const clipTask = order.tasks.find(t => t.type === 'clip' && t.status === 'done');
+          const clipTask = order.tasks.find(t => t.type === 'clip' && t.status === 'done') || order.tasks.find(t => t.type === 'original_clip' && t.status === 'done');
           if (!clipTask?.orderNum) throw new Error('缺少剪辑任务订单号，无法重试视频合成');
           const videoResponse = await synthesizeVideo({
             order_num: clipTask.orderNum,
@@ -916,7 +1072,38 @@ function LoadApp() {
 
     setRetryingOrder(true);
     try {
-      if (order.templateSource === 'generate') {
+      if (order.copywritingType === 'original') {
+        // 原创文案流程：创建 original_script 任务
+        updateOrderStatus(orderId, 'original_script', '');
+        setCurrentOrder(getOrder(orderId));
+
+        const learningSrt = order.viralSrtPath || order.videoSrtPath;
+        const osEpisodesData = order.episodesData?.length > 0
+          ? order.episodesData.map(e => ({ num: e.num, srt_oss_key: e.srt_oss_key }))
+          : [{ num: 1, srt_oss_key: order.videoSrtPath }];
+        const osLearningModelId = order.templateSource === 'generate' ? null : (order.templateId || null);
+
+        const osResponse = await generateOriginalScript({
+          app_key: order.appKey,
+          model: order.originalModel || 'flash',
+          language: order.originalLanguage || '中文',
+          perspective: 'third_person',
+          target_mode: (order.originalMode as '1' | '2' | '3') || '3',
+          learning_srt: learningSrt,
+          playlet_name: order.movieName,
+          episodes_data: osEpisodesData,
+          learning_model_id: osLearningModelId,
+          confirmed_movie_json: order.confirmedMovieJson || null,
+          target_character_name: order.targetCharacterName || '主角名'
+        });
+
+        const osTask: ITask = {
+          type: 'original_script', taskId: osResponse.task_id, orderNum: '',
+          status: 'running', pollCount: 0, elapsedTime: 0,
+          result: null, errorMessage: '', createdAt: Date.now(), completedAt: null
+        };
+        updateOrderTask(orderId, osTask);
+      } else if (order.templateSource === 'generate') {
         // 自定义模板：创建爆款模型任务
         updateOrderStatus(orderId, 'viral_learn', '');
         setCurrentOrder(getOrder(orderId));
@@ -1005,6 +1192,14 @@ function LoadApp() {
     setCustomDubbingText('');
     setNarratorType('movie');
     setModelVersion('standard');
+    setCopywritingType('secondary');
+    setOriginalMode('3');
+    setOriginalLanguage('中文');
+    setOriginalModel('flash');
+    setMovieSearchQuery('');
+    setMovieSearchResults([]);
+    setConfirmedMovieJson(null);
+    setMovieSearchModalVisible(false);
     setTaskPhase('idle');
     setPage('create');
     loadMovies();
@@ -1047,12 +1242,13 @@ function LoadApp() {
   
   // 预估点数：点击"开始生成视频"时先调用
   const handleEstimatePoints = async () => {
+    const _isOriginal = copywritingType === 'original';
     if (!selectedMovie || !selectedBGM || !selectedDubbing || !selectedTemplate) {
       setErrorMessage('请完成所有配置');
       return;
     }
     const _isCustomMovie = selectedMovie.name === '自定义';
-    const _isCustomTemplate = selectedTemplate.name === '自定义';
+    const _isCustomTemplate = selectedTemplate?.name === '自定义';
     if (_isCustomMovie && !customMovieName.trim()) {
       setErrorMessage('请输入电影名称');
       return;
@@ -1084,6 +1280,31 @@ function LoadApp() {
     setEstimateResult(null);
     setEstimateModalVisible(true);
 
+    if (_isOriginal) {
+      // 原创文案：客户端直接计算点数（无需调用后端 estimatePoints API）
+      // 极速版: 5点/千字, 旗舰版: 15点/千字, 基于爆款SRT字数
+      try {
+        const rate = originalModel === 'flash' ? 5 : 15;
+        // 构造一个模拟的估算结果
+        const mockResult: IEstimatePointsResponse = {
+          viral_learning_points: null,
+          commentary_generation_points: null,
+          video_synthesis_points: null,
+          refine_srt_gaps_points: null,
+          total_consume_points: 0,
+          visual_template_points: null,
+          template_points: null,
+          text_model_points: rate
+        };
+        setEstimateResult(mockResult);
+      } catch (err: any) {
+        setEstimateError(err?.message || '预估点数失败');
+      } finally {
+        setEstimateLoading(false);
+      }
+      return;
+    }
+
     const srtOssKey = _isCustomMovie && !isShortDrama ? (selectedEpisodeSrtFile!.file_id) : selectedMovie.srt_file_id;
     const videoOssKey = _isCustomMovie && !isShortDrama ? (selectedEpisodeVideoFile?.file_id || selectedEpisodeSrtFile!.file_id) : selectedMovie.video_file_id;
 
@@ -1106,7 +1327,7 @@ function LoadApp() {
       model_version: _isCustomTemplate ? modelVersion : 'standard',
       ...(_isCustomTemplate
         ? { learning_srt: selectedViralSrtFile!.file_id }
-        : { learning_model_id: selectedTemplate.learning_model_id })
+        : { learning_model_id: selectedTemplate!.learning_model_id })
     };
 
     try {
@@ -1182,6 +1403,7 @@ function LoadApp() {
     let order: IOrder | null = null;
     try {
       // 创建订单记录
+      const isOriginal = copywritingType === 'original';
       order = createOrder({
         appKey: appKey,
         movieId: selectedMovie.id,
@@ -1201,14 +1423,55 @@ function LoadApp() {
         deliveryMode: deliveryMode,
         videoPath: isShortDrama ? (episodePairs[0]?.video.file_id || '') : videoOssKey,
         videoSrtPath: isShortDrama ? (episodePairs[0]?.srt.file_id || '') : srtOssKey,
-        viralSrtPath: _isCustomTemplate ? selectedViralSrtFile!.file_id : '',
+        viralSrtPath: _isCustomTemplate ? selectedViralSrtFile!.file_id : (isOriginal ? srtOssKey : ''),
         narratorType: narratorType,
         modelVersion: modelVersion,
-        episodesData: orderEpisodesData
+        episodesData: orderEpisodesData,
+        copywritingType: copywritingType,
+        originalMode: isOriginal ? originalMode : '',
+        originalLanguage: isOriginal ? originalLanguage : '',
+        originalModel: isOriginal ? originalModel : 'flash',
+        confirmedMovieJson: isOriginal ? confirmedMovieJson : null
       });
       
-      if (_isCustomTemplate) {
-        // 自定义模板：先创建爆款模型任务
+      if (isOriginal) {
+        // 原创文案流程：直接创建 original_script 任务（无爆款学习步骤）
+        updateOrderStatus(order.id, 'original_script');
+        setTaskMessage('正在创建原创文案任务...');
+
+        const learningSrt = _isCustomTemplate ? selectedViralSrtFile!.file_id : srtOssKey;
+        const osEpisodesData = orderEpisodesData.map(e => ({ num: e.num, srt_oss_key: e.srt_oss_key }));
+        const osLearningModelId = _isCustomTemplate ? null : selectedTemplate.learning_model_id;
+
+        const osResponse = await generateOriginalScript({
+          app_key: appKey,
+          model: originalModel,
+          language: originalLanguage,
+          perspective: 'third_person',
+          target_mode: originalMode,
+          learning_srt: learningSrt,
+          playlet_name: _isCustomMovie ? (customMovieName.trim() || '自定义') : selectedMovie.name,
+          episodes_data: osEpisodesData,
+          learning_model_id: osLearningModelId,
+          confirmed_movie_json: confirmedMovieJson,
+          target_character_name: targetCharacterName || selectedMovie.character_name || '主角名'
+        });
+
+        const osTask: ITask = {
+          type: 'original_script',
+          taskId: osResponse.task_id,
+          orderNum: '',
+          status: 'running',
+          pollCount: 0,
+          elapsedTime: 0,
+          result: null,
+          errorMessage: '',
+          createdAt: Date.now(),
+          completedAt: null
+        };
+        updateOrderTask(order.id, osTask);
+      } else if (_isCustomTemplate) {
+        // 二创文案 + 自定义模板：先创建爆款模型任务
         updateOrderStatus(order.id, 'viral_learn');
         setTaskMessage('正在创建爆款模型任务...');
         
@@ -1306,6 +1569,14 @@ function LoadApp() {
     setCustomDubbingText('');
     setNarratorType('movie');
     setModelVersion('standard');
+    setCopywritingType('secondary');
+    setOriginalMode('3');
+    setOriginalLanguage('中文');
+    setOriginalModel('flash');
+    setMovieSearchQuery('');
+    setMovieSearchResults([]);
+    setConfirmedMovieJson(null);
+    setMovieSearchModalVisible(false);
     setTaskPhase('idle');
     setTaskMessage('');
     setErrorMessage('');
@@ -1916,6 +2187,47 @@ function LoadApp() {
           <div>
             <div className="section-title">选择爆款电影</div>
 
+            <div style={{ marginBottom: 12 }}>
+              <label className="form-label">文案类型</label>
+              <Radio.Group value={copywritingType} onChange={(e) => {
+                setCopywritingType(e.target.value);
+                setSelectedTemplate(null);
+                setSelectedViralSrtFile(null);
+                setSelectedViralVideoFile(null);
+                setConfirmedMovieJson(null);
+                if (e.target.value === 'original') {
+                  // 原创文案纯解说不支持短剧
+                  if (narratorType === 'short_drama' && originalMode === '3') {
+                    setOriginalMode('2');
+                  }
+                }
+              }}>
+                <Radio value="secondary">二创文案</Radio>
+                <Radio value="original">原创文案</Radio>
+              </Radio.Group>
+            </div>
+
+            {copywritingType === 'original' && (
+              <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <label className="form-label">原创模式</label>
+                  <Select style={{ width: '100%' }} value={originalMode} onChange={(v: '2' | '3') => {
+                    setOriginalMode(v);
+                    if (v === '3' && narratorType === 'short_drama') {
+                      setNarratorType('movie');
+                      setSelectedMovie(null);
+                      setEpisodePairs([]);
+                    }
+                  }}
+                    options={[
+                      { label: '纯解说（仅电影）', value: '3' },
+                      { label: '原声混剪（电影+短剧）', value: '2' }
+                    ]}
+                  />
+                </div>
+              </div>
+            )}
+
             <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
               <div style={{ flex: 1 }}>
                 <label className="form-label">解说类型</label>
@@ -1928,13 +2240,21 @@ function LoadApp() {
                   setCustomMovieName('');
                   setEpisodePairs([]);
                 }}
-                  options={[
-                    { label: '电影', value: 'movie' },
-                    { label: '第一人称电影', value: 'first_person_movie' },
-                    { label: '多语种电影', value: 'multilingual' },
-                    { label: '第一人称多语种', value: 'first_person_multilingual' },
-                    { label: '短剧', value: 'short_drama' }
-                  ]}
+                  options={copywritingType === 'original' && originalMode === '3'
+                    ? [
+                        { label: '电影', value: 'movie' },
+                        { label: '第一人称电影', value: 'first_person_movie' },
+                        { label: '多语种电影', value: 'multilingual' },
+                        { label: '第一人称多语种', value: 'first_person_multilingual' }
+                      ]
+                    : [
+                        { label: '电影', value: 'movie' },
+                        { label: '第一人称电影', value: 'first_person_movie' },
+                        { label: '多语种电影', value: 'multilingual' },
+                        { label: '第一人称多语种', value: 'first_person_multilingual' },
+                        { label: '短剧', value: 'short_drama' }
+                      ]
+                  }
                 />
               </div>
               <div style={{ flex: 1 }}>
@@ -1979,8 +2299,70 @@ function LoadApp() {
               <div className="cloud-file-section">
                 <div className="form-group" style={{ marginBottom: 12 }}>
                   <label className="form-label">影片名称 <span style={{ color: '#ff4d4f' }}>*必填</span></label>
-                  <Input placeholder="请输入影片名称" value={customMovieName} onChange={(e) => setCustomMovieName(e.target.value)} />
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <Input placeholder="请输入影片名称" value={customMovieName} onChange={(e) => setCustomMovieName(e.target.value)}
+                      onPressEnter={() => { if (copywritingType === 'original' && customMovieName.trim()) handleSearchMovies(customMovieName); }}
+                    />
+                    {copywritingType === 'original' && (
+                      <Button type="primary" loading={movieSearchLoading} disabled={!customMovieName.trim()}
+                        onClick={() => handleSearchMovies(customMovieName)}>
+                        搜索电影
+                      </Button>
+                    )}
+                  </div>
                 </div>
+
+                {/* 原创文案：电影搜索结果 */}
+                {copywritingType === 'original' && movieSearchResults.length > 0 && !confirmedMovieJson && (
+                  <div style={{ marginBottom: 12 }}>
+                    <label className="form-label" style={{ fontSize: 12 }}>搜索结果 ({movieSearchResults.length} 部)</label>
+                    {movieSearchResults.map((movie, idx) => (
+                      <Card key={idx} size="small" style={{ marginBottom: 6 }}>
+                        <div style={{ display: 'flex', gap: 10 }}>
+                          {movie.poster_url && (
+                            <img src={movie.poster_url} alt={movie.local_title} style={{ width: 50, height: 70, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
+                          )}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{movie.local_title}</div>
+                            <div style={{ fontSize: 11, color: '#666' }}>{movie.title} ({movie.year})</div>
+                            <div style={{ fontSize: 11, color: '#888' }}>{movie.genre} | 导演: {movie.director}</div>
+                            <div style={{ fontSize: 11, color: '#888' }}>主演: {movie.stars?.slice(0, 3).join(', ')}</div>
+                            <div style={{ fontSize: 11, color: '#999', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{movie.summary?.slice(0, 60)}...</div>
+                          </div>
+                          <Button size="small" type="primary" style={{ alignSelf: 'center', flexShrink: 0 }}
+                            onClick={() => {
+                              setConfirmedMovieJson(movie);
+                              setMovieSearchResults([]);
+                              message.success(`已选择: ${movie.local_title}`);
+                            }}>
+                            选择
+                          </Button>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+
+                {copywritingType === 'original' && movieSearchLoading && (
+                  <div style={{ textAlign: 'center', padding: 16 }}><Spin tip="正在搜索电影信息..." /></div>
+                )}
+
+                {/* 原创文案：已确认的电影信息 */}
+                {copywritingType === 'original' && confirmedMovieJson && (
+                  <div style={{ marginBottom: 12, padding: 12, background: '#f6ffed', borderRadius: 8, border: '1px solid #b7eb8f' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>✅ 已确认电影信息</div>
+                        <div style={{ fontSize: 12 }}>
+                          <div><strong>{confirmedMovieJson.local_title}</strong> ({confirmedMovieJson.year})</div>
+                          <div style={{ color: '#666' }}>{confirmedMovieJson.genre} | 导演: {confirmedMovieJson.director}</div>
+                          <div style={{ color: '#888', marginTop: 2 }}>{confirmedMovieJson.summary?.slice(0, 80)}...</div>
+                        </div>
+                      </div>
+                      <Button size="small" type="link" danger onClick={() => setConfirmedMovieJson(null)} style={{ flexShrink: 0 }}>清除</Button>
+                    </div>
+                  </div>
+                )}
 
                 {isShortDrama ? (
                   <>
@@ -2350,6 +2732,42 @@ function LoadApp() {
         const allTemplates = [customTemplateOption, ...filteredTemplates];
         return (
           <div>
+            {/* 原创文案配置 */}
+            {copywritingType === 'original' && (
+              <>
+                <div className="section-title">原创文案配置</div>
+                <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <label className="form-label">文案语言</label>
+                    <Select style={{ width: '100%' }} value={originalLanguage} onChange={(v: string) => setOriginalLanguage(v)}
+                      options={[
+                        { label: '中文', value: '中文' },
+                        { label: '英语', value: '英语' },
+                        { label: '日语', value: '日语' },
+                        { label: '韩语', value: '韩语' },
+                        { label: '泰语', value: '泰语' },
+                        { label: '印尼语', value: '印尼语' },
+                        { label: '葡萄牙语', value: '葡萄牙语' },
+                        { label: '西班牙语', value: '西班牙语' },
+                        { label: '法语', value: '法语' },
+                        { label: '德语', value: '德语' },
+                        { label: '阿拉伯语', value: '阿拉伯语' }
+                      ]}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label className="form-label">文案模型</label>
+                    <Select style={{ width: '100%' }} value={originalModel} onChange={(v: 'flash' | 'standard') => setOriginalModel(v)}
+                      options={[
+                        { label: '极速版 (5点/千字)', value: 'flash' },
+                        { label: '旗舰版 (15点/千字)', value: 'standard' }
+                      ]}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
             <div className="section-title">选择解说模板</div>
 
             <div className={`movie-list-scroll ${isCustomTemplate ? 'compact' : ''}`}>
@@ -2540,7 +2958,7 @@ function LoadApp() {
                 </div>
                 
                 <div className="form-group">
-                  <label className="form-label">主角名称 (可选)</label>
+                  <label className="form-label">主角名称 {narratorType.startsWith('first_person') ? <span style={{ color: '#ff4d4f' }}>*必填</span> : '(可选)'}</label>
                   <Input
                     placeholder={selectedMovie?.character_name || '主角'}
                     value={targetCharacterName}
@@ -2847,12 +3265,22 @@ function LoadApp() {
                       <p className="hint">字幕ID: {selectedMovie?.srt_file_id}</p>
                     </>
                   )}
+                  {copywritingType === 'original' && (
+                    <>
+                      <p><strong>文案类型:</strong> 原创文案 ({originalMode === '2' ? '原声混剪' : '纯解说'})</p>
+                      <p className="hint">文案语言: {originalLanguage} | 文案模型: {originalModel === 'flash' ? '极速版' : '旗舰版'}</p>
+                      {confirmedMovieJson && <p className="hint">电影信息: {confirmedMovieJson.local_title} ({confirmedMovieJson.year})</p>}
+                    </>
+                  )}
                   <p><strong>模板:</strong> {selectedTemplate?.name === '自定义' ? '自定义模板' : selectedTemplate?.name}</p>
                   {selectedTemplate?.name === '自定义' ? (
                     <>
                       <p className="hint">爆款SRT: {selectedViralSrtFile?.file_name}</p>
                       {selectedViralVideoFile && <p className="hint">爆款视频: {selectedViralVideoFile.file_name}</p>}
-                      <p className="hint" style={{ color: '#eb2f96' }}>将先生成爆款模型，再自动创建文案</p>
+                      {copywritingType === 'original'
+                        ? <p className="hint" style={{ color: '#52c41a' }}>无需爆款学习步骤，直接生成原创文案</p>
+                        : <p className="hint" style={{ color: '#eb2f96' }}>将先生成爆款模型，再自动创建文案</p>
+                      }
                     </>
                   ) : (
                     <p className="hint">模型ID: {selectedTemplate?.learning_model_id}</p>
@@ -2932,6 +3360,7 @@ function LoadApp() {
         if (!selectedBGM || !selectedDubbing) return false;
         if (selectedBGM.name === '自定义' && !selectedCustomBgmFile) return false;
         if (selectedDubbing.name === '自定义' && !customDubbingText.trim()) return false;
+        if ((narratorType === 'first_person_movie' || narratorType === 'first_person_multilingual') && !targetCharacterName.trim()) return false;
         return true;
       }
       default: return false;
@@ -3005,7 +3434,7 @@ function LoadApp() {
             <div className="order-card-header">
               <div>
                 <div className="order-card-title">{order.movieName}</div>
-                <div className="order-card-meta">{formatTime(order.createdAt)} | {order.templateSource === 'generate' ? '自定义模板' : order.templateName}</div>
+                <div className="order-card-meta">{formatTime(order.createdAt)} | {order.copywritingType === 'original' ? '原创文案' : (order.templateSource === 'generate' ? '自定义模板' : order.templateName)}</div>
               </div>
               <Tag color={getStatusColor(order.status)}>{getStatusText(order.status)}</Tag>
             </div>
@@ -3013,7 +3442,8 @@ function LoadApp() {
               const failedTask = order.tasks.find(t => t.status === 'error');
               const stageMap: Record<string, string> = {
                 viral_learn: '生成爆款模型', script: '生成解说文案',
-                clip: '生成剪辑脚本', video: '合成视频'
+                clip: '生成剪辑脚本', video: '合成视频',
+                original_script: '原创文案生成', original_clip: '原创文案剪辑'
               };
               const stageName = failedTask ? stageMap[failedTask.type] || failedTask.type : '未知阶段';
               const reason = failedTask?.errorMessage || order.errorMessage || '未知原因';
@@ -3040,6 +3470,8 @@ function LoadApp() {
         case 'script': return '📝';
         case 'clip': return '✂️';
         case 'video': return '🎬';
+        case 'original_script': return '✍️';
+        case 'original_clip': return '🎞️';
         default: return '📋';
       }
     };
@@ -3050,6 +3482,8 @@ function LoadApp() {
         case 'script': return '生成解说文案';
         case 'clip': return '生成剪辑脚本';
         case 'video': return '合成视频';
+        case 'original_script': return '原创文案生成';
+        case 'original_clip': return '原创文案剪辑';
         default: return type;
       }
     };
@@ -3149,9 +3583,9 @@ function LoadApp() {
                     <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>消耗点数: {task.result.api_response.data.consumed_points}</div>
                   )}
                   {task.type !== 'viral_learn' && (() => {
-                    // 优先使用 data.files；script/clip 任务若无 files 则从 task_result 构造
+                    // 优先使用 data.files；script/clip/original_script/original_clip 任务若无 files 则从 task_result 构造
                     let files: any[] = task.result?.api_response?.data?.files || [];
-                    if (files.length === 0 && (task.type === 'script' || task.type === 'clip')) {
+                    if (files.length === 0 && (task.type === 'script' || task.type === 'clip' || task.type === 'original_script' || task.type === 'original_clip')) {
                       const taskResults: any[] = task.result?.api_response?.data?.results?.tasks || [];
                       files = taskResults.reduce((acc: any[], t: any) => {
                         if (!t.task_result) return acc;
@@ -3259,7 +3693,7 @@ function LoadApp() {
         style={{ marginBottom: 24 }}
         items={[
           { title: '选择电影' },
-          { title: isCustomMovie ? '爆款模型' : '选择模板' },
+          { title: copywritingType === 'original' ? '原创+模板' : (isCustomMovie ? '爆款模型' : '选择模板') },
           { title: '配置' },
           { title: '执行' }
         ]}

@@ -118,6 +118,21 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/file_download/, ''),
       },
+      '/api/movie_search': {
+        target: 'https://bkvwdm8fpf.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/movie_search/, ''),
+      },
+      '/api/original_script': {
+        target: 'https://knh3yghcjg.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/original_script/, ''),
+      },
+      '/api/original_clip': {
+        target: 'https://b3k9vphmc4.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/original_clip/, ''),
+      },
     },
   }
 })

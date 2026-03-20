@@ -7,10 +7,10 @@ function syncToBackend(fn: () => Promise<any>) {
 }
 
 // 子任务类型
-export type TaskType = 'viral_learn' | 'script' | 'clip' | 'video';
+export type TaskType = 'viral_learn' | 'script' | 'clip' | 'video' | 'original_script' | 'original_clip';
 export type TaskStatus = 'pending' | 'running' | 'done' | 'error' | 'wait_confirm';
 export type DeliveryMode = 'oneStop' | 'staged';
-export type OrderStatus = 'pending' | 'viral_learn' | 'script' | 'clip' | 'video' | 'done' | 'error';
+export type OrderStatus = 'pending' | 'viral_learn' | 'script' | 'clip' | 'video' | 'original_script' | 'original_clip' | 'done' | 'error';
 
 // 子任务
 export interface ITask {
@@ -52,6 +52,11 @@ export interface IOrder {
   modelVersion: string;
   learningModelId: string;
   episodesData: Array<{ num: number; srt_oss_key: string; video_oss_key: string; negative_oss_key: string }>;
+  copywritingType: 'secondary' | 'original';
+  originalMode: '2' | '3' | '';
+  originalLanguage: string;
+  originalModel: 'flash' | 'standard';
+  confirmedMovieJson: import('./types').IMovieSearchResult | null;
   status: OrderStatus;
   createdAt: number;
   updatedAt: number;
@@ -195,6 +200,11 @@ export function createOrder(params: {
   narratorType?: string;
   modelVersion?: string;
   episodesData?: Array<{ num: number; srt_oss_key: string; video_oss_key: string; negative_oss_key: string }>;
+  copywritingType?: 'secondary' | 'original';
+  originalMode?: '2' | '3' | '';
+  originalLanguage?: string;
+  originalModel?: 'flash' | 'standard';
+  confirmedMovieJson?: import('./types').IMovieSearchResult | null;
 }): IOrder {
   const order: IOrder = {
     id: generateOrderId(),
@@ -221,6 +231,11 @@ export function createOrder(params: {
     modelVersion: params.modelVersion || '',
     learningModelId: '',
     episodesData: params.episodesData || [],
+    copywritingType: params.copywritingType || 'secondary',
+    originalMode: params.originalMode || '',
+    originalLanguage: params.originalLanguage || '',
+    originalModel: params.originalModel || 'flash',
+    confirmedMovieJson: params.confirmedMovieJson || null,
     status: 'pending',
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -287,6 +302,8 @@ export function getStatusText(status: OrderStatus | TaskStatus): string {
     script: '生成文案中',
     clip: '生成剪辑中',
     video: '合成视频中',
+    original_script: '原创文案生成中',
+    original_clip: '原创文案剪辑中',
     running: '执行中',
     wait_confirm: '待确认',
     done: '已完成',
@@ -303,6 +320,8 @@ export function getStatusColor(status: OrderStatus | TaskStatus): string {
     script: '#1890ff',
     clip: '#52c41a',
     video: '#722ed1',
+    original_script: '#13c2c2',
+    original_clip: '#2f54eb',
     running: '#1890ff',
     wait_confirm: '#fa8c16',
     done: '#52c41a',
