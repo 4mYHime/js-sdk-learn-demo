@@ -3370,8 +3370,9 @@ function LoadApp() {
   // 渲染登录页
   const renderLoginPage = () => (
     <div className="login-page">
-      <div className="login-title">🎬 AI视频解说生成</div>
-      <div className="login-subtitle">一键生成爆款电影解说视频</div>
+      <img src="https://jieshuo.cn/subtitle-preview/logo.png" alt="Logo" style={{ width: 64, height: 64, marginBottom: 12 }} />
+      <div className="login-title">AI解说大师</div>
+      <div className="login-subtitle">电影解说AI智能体</div>
       <div className="login-card">
         <div style={{ marginBottom: 16 }}>
           <Input
@@ -3397,7 +3398,7 @@ function LoadApp() {
   const renderOrdersPage = () => (
     <div className="page">
       <div className="page-header">
-        <h3>AI解说大师</h3>
+        <h3><img src="https://jieshuo.cn/subtitle-preview/logo.png" alt="Logo" style={{ width: 24, height: 24, verticalAlign: 'middle', marginRight: 6 }} />AI解说大师</h3>
         <div className="page-header-actions">
           <Button size="small" onClick={refreshOrders} loading={refreshingOrders}>🔄 同步订单状态</Button>
           <Button size="small" type="link" danger onClick={handleLogout}>退出</Button>
