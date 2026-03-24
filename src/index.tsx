@@ -127,6 +127,8 @@ function LoadApp() {
   const [targetCharacterName, setTargetCharacterName] = useState('');
   const [vendorRequirements, setVendorRequirements] = useState('');
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('staged');
+  const [movieListExpanded, setMovieListExpanded] = useState(true);
+  const [templateListExpanded, setTemplateListExpanded] = useState(true);
   const [bgmListExpanded, setBgmListExpanded] = useState(true);
   const [dubbingListExpanded, setDubbingListExpanded] = useState(true);
   
@@ -1302,6 +1304,10 @@ function LoadApp() {
     setMovieSearchResults([]);
     setConfirmedMovieJson(null);
     setMovieSearchModalVisible(false);
+    setMovieListExpanded(true);
+    setTemplateListExpanded(true);
+    setBgmListExpanded(true);
+    setDubbingListExpanded(true);
     setTaskPhase('idle');
     setPage('create');
     loadMovies();
@@ -1680,6 +1686,10 @@ function LoadApp() {
     setMovieSearchResults([]);
     setConfirmedMovieJson(null);
     setMovieSearchModalVisible(false);
+    setMovieListExpanded(true);
+    setTemplateListExpanded(true);
+    setBgmListExpanded(true);
+    setDubbingListExpanded(true);
     setTaskPhase('idle');
     setTaskMessage('');
     setErrorMessage('');
@@ -2297,6 +2307,7 @@ function LoadApp() {
                 onChange={(e) => {
                   const val = e.target.value as string;
                   setSelectedTemplate(null);
+                  setTemplateListExpanded(true);
                   setSelectedViralSrtFile(null);
                   setSelectedViralVideoFile(null);
                   setConfirmedMovieJson(null);
@@ -2310,17 +2321,25 @@ function LoadApp() {
                     if (narratorType === 'short_drama') {
                       setNarratorType('movie');
                       setSelectedMovie(null);
+                      setMovieListExpanded(true);
                       setEpisodePairs([]);
                     }
                   } else if (val === 'original_原声混剪') {
                     setCopywritingType('original');
                     setOriginalMode('原声混剪');
+                    if (narratorType === 'short_drama') {
+                      setNarratorType('movie');
+                      setSelectedMovie(null);
+                      setMovieListExpanded(true);
+                      setEpisodePairs([]);
+                    }
                   } else if (val === 'original_冷门新剧') {
                     setCopywritingType('original');
                     setOriginalMode('冷门新剧');
                     if (narratorType !== 'short_drama') {
                       setNarratorType('short_drama');
                       setSelectedMovie(null);
+                      setMovieListExpanded(true);
                       setSelectedEpisodeSrtFile(null);
                       setSelectedEpisodeVideoFile(null);
                       setCustomMovieName('');
@@ -2347,7 +2366,9 @@ function LoadApp() {
                   onChange={(v: string) => {
                     setNarratorType(v);
                     setSelectedTemplate(null);
+                    setTemplateListExpanded(true);
                     setSelectedMovie(null);
+                    setMovieListExpanded(true);
                     setSelectedEpisodeSrtFile(null);
                     setSelectedEpisodeVideoFile(null);
                     setCustomMovieName('');
@@ -2356,7 +2377,7 @@ function LoadApp() {
                   options={
                     copywritingType === 'original' && originalMode === '冷门新剧'
                       ? [{ label: '短剧', value: 'short_drama' }]
-                      : copywritingType === 'original' && originalMode === '热门影视'
+                      : copywritingType === 'original'
                         ? [
                             { label: '电影', value: 'movie' },
                             { label: '第一人称电影', value: 'first_person_movie' },
@@ -2383,49 +2404,89 @@ function LoadApp() {
               </div>
             </div>
 
-            <div className={`movie-list-scroll ${isCustomMovie ? 'compact' : ''}`}>
-              {moviesLoading ? (
-                <Spin tip="加载中..." />
-              ) : (
-                (isShortDrama ? movies.filter(m => m.name === '自定义') : movies).map((movie) => (
-                  <div
-                    key={movie.id}
-                    className={`select-card ${selectedMovie?.id === movie.id ? 'selected' : ''}`}
-                    onClick={() => setSelectedMovie(movie)}
-                  >
-                    {movie.cover ? (
-                      <img className="select-card-cover" src={movie.cover} alt={movie.name}
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }}
-                      />
-                    ) : null}
-                    <div className={`select-card-cover-placeholder ${movie.cover ? 'hidden' : ''}`}>🎬</div>
-                    <div className="select-card-info">
-                      <div className="select-card-title">{movie.name}</div>
-                      <div className="select-card-desc">
-                        <div>类型: {movie.type}</div>
-                        <div>{movie.story_info?.slice(0, 50)}...</div>
-                      </div>
-                    </div>
-                  </div>
-                ))
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <label className="form-label" style={{ marginBottom: 0 }}>选择影片</label>
+              {selectedMovie && !movieListExpanded && (
+                <Button size="small" type="link" onClick={() => setMovieListExpanded(true)}>重新选择</Button>
               )}
             </div>
+            {selectedMovie && !movieListExpanded ? (
+              <div className={`movie-list-scroll ${isCustomMovie ? 'compact' : ''}`}>
+                <div className="select-card selected">
+                  {selectedMovie.cover ? (
+                    <img className="select-card-cover" src={selectedMovie.cover} alt={selectedMovie.name}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }}
+                    />
+                  ) : null}
+                  <div className={`select-card-cover-placeholder ${selectedMovie.cover ? 'hidden' : ''}`}>🎬</div>
+                  <div className="select-card-info">
+                    <div className="select-card-title">{selectedMovie.name}</div>
+                    <div className="select-card-desc">
+                      <div>类型: {selectedMovie.type}</div>
+                      <div>{selectedMovie.story_info?.slice(0, 50)}...</div>
+                    </div>
+                  </div>
+                  <div style={{ position: 'absolute', top: 8, right: 8, color: '#5b21b6', fontSize: 18 }}>✓</div>
+                </div>
+              </div>
+            ) : (
+              <div className={`movie-list-scroll ${isCustomMovie ? 'compact' : ''}`}>
+                {moviesLoading ? (
+                  <Spin tip="加载中..." />
+                ) : (
+                  (isShortDrama ? movies.filter(m => m.name === '自定义') : movies).map((movie) => (
+                    <div
+                      key={movie.id}
+                      className={`select-card ${selectedMovie?.id === movie.id ? 'selected' : ''}`}
+                      onClick={() => { setSelectedMovie(movie); setMovieListExpanded(false); }}
+                    >
+                      {movie.cover ? (
+                        <img className="select-card-cover" src={movie.cover} alt={movie.name}
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }}
+                        />
+                      ) : null}
+                      <div className={`select-card-cover-placeholder ${movie.cover ? 'hidden' : ''}`}>🎬</div>
+                      <div className="select-card-info">
+                        <div className="select-card-title">{movie.name}</div>
+                        <div className="select-card-desc">
+                          <div>类型: {movie.type}</div>
+                          <div>{movie.story_info?.slice(0, 50)}...</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
 
             {isCustomMovie && (
               <div className="cloud-file-section">
                 <div className="form-group" style={{ marginBottom: 12 }}>
                   <label className="form-label">影片名称 <span style={{ color: '#ff4d4f' }}>*必填</span></label>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <Input placeholder="请输入影片名称" value={customMovieName} onChange={(e) => setCustomMovieName(e.target.value)}
-                      onPressEnter={() => { if (copywritingType === 'original' && customMovieName.trim()) handleSearchMovies(customMovieName); }}
-                    />
-                    {copywritingType === 'original' && (
-                      <Button type="primary" loading={movieSearchLoading} disabled={!customMovieName.trim()}
-                        onClick={() => handleSearchMovies(customMovieName)}>
-                        搜索电影{(originalMode === '冷门新剧' || (originalMode === '原声混剪' && isShortDrama)) ? ' (可选)' : ''}
-                      </Button>
-                    )}
-                  </div>
+                  <Input placeholder="请输入影片名称" value={customMovieName} onChange={(e) => setCustomMovieName(e.target.value)}
+                    onPressEnter={() => { if (copywritingType === 'original' && customMovieName.trim()) handleSearchMovies(customMovieName); }}
+                    style={{ marginBottom: copywritingType === 'original' ? 8 : 0 }}
+                  />
+                  {copywritingType === 'original' && !confirmedMovieJson && (() => {
+                    const isOptional = originalMode === '冷门新剧';
+                    return (
+                      <div>
+                        <Button
+                          type={isOptional ? 'dashed' : 'primary'}
+                          block
+                          loading={movieSearchLoading}
+                          disabled={!customMovieName.trim()}
+                          onClick={() => handleSearchMovies(customMovieName)}
+                          style={{ borderRadius: 8 }}
+                        >
+                          🔍 搜索关联电影信息{isOptional ? '（可选）' : ''}
+                        </Button>
+                        {!isOptional && (
+                          <div style={{ fontSize: 11, color: '#ff4d4f', marginTop: 4 }}>请输入影片名称后搜索并选择电影信息</div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* 原创文案：电影搜索结果 */}
@@ -2884,42 +2945,74 @@ function LoadApp() {
               </>
             )}
 
-            <div className="section-title">选择解说模板</div>
-
-            <div className={`movie-list-scroll ${isCustomTemplate ? 'compact' : ''}`}>
-              {templatesLoading ? (
-                <Spin tip="加载中..." />
-              ) : (
-                allTemplates.map((template) => (
-                  <div
-                    key={template.id}
-                    className={`select-card ${selectedTemplate?.id === template.id ? 'selected' : ''}`}
-                    onClick={() => { setSelectedTemplate(template); if (template.name === '自定义') { if (viralSrtFiles.length === 0) loadViralSrtFiles(); if (viralVideoFiles.length === 0) loadViralVideoFiles(); } }}
-                  >
-                    {template.img ? (
-                      <img className="select-card-cover" src={template.img} alt={template.name}
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }}
-                      />
-                    ) : null}
-                    <div className={`select-card-cover-placeholder ${template.img ? 'hidden' : ''}`}>📝</div>
-                    <div className="select-card-info">
-                      <div className="select-card-title">{template.name}</div>
-                      <div className="select-card-desc">
-                        {template.name === '自定义' ? (
-                          <div>从云盘选择爆款SRT文件，自动生成学习模型</div>
-                        ) : (
-                          <>
-                            <div>类型: {template.narrator_type || template.type}</div>
-                            <div>语言: {template.language || '中文'}</div>
-                            {template.tags && <div>标签: {template.tags}</div>}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <div className="section-title" style={{ marginBottom: 0 }}>选择解说模板</div>
+              {selectedTemplate && !templateListExpanded && (
+                <Button size="small" type="link" onClick={() => setTemplateListExpanded(true)}>重新选择</Button>
               )}
             </div>
+            {selectedTemplate && !templateListExpanded ? (
+              <div className={`movie-list-scroll ${isCustomTemplate ? 'compact' : ''}`}>
+                <div className="select-card selected">
+                  {selectedTemplate.img ? (
+                    <img className="select-card-cover" src={selectedTemplate.img} alt={selectedTemplate.name}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }}
+                    />
+                  ) : null}
+                  <div className={`select-card-cover-placeholder ${selectedTemplate.img ? 'hidden' : ''}`}>📝</div>
+                  <div className="select-card-info">
+                    <div className="select-card-title">{selectedTemplate.name}</div>
+                    <div className="select-card-desc">
+                      {selectedTemplate.name === '自定义' ? (
+                        <div>从云盘选择爆款SRT文件，自动生成学习模型</div>
+                      ) : (
+                        <>
+                          <div>类型: {selectedTemplate.narrator_type || selectedTemplate.type}</div>
+                          <div>语言: {selectedTemplate.language || '中文'}</div>
+                          {selectedTemplate.tags && <div>标签: {selectedTemplate.tags}</div>}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ position: 'absolute', top: 8, right: 8, color: '#5b21b6', fontSize: 18 }}>✓</div>
+                </div>
+              </div>
+            ) : (
+              <div className={`movie-list-scroll ${isCustomTemplate ? 'compact' : ''}`}>
+                {templatesLoading ? (
+                  <Spin tip="加载中..." />
+                ) : (
+                  allTemplates.map((template) => (
+                    <div
+                      key={template.id}
+                      className={`select-card ${selectedTemplate?.id === template.id ? 'selected' : ''}`}
+                      onClick={() => { setSelectedTemplate(template); setTemplateListExpanded(false); if (template.name === '自定义') { if (viralSrtFiles.length === 0) loadViralSrtFiles(); if (viralVideoFiles.length === 0) loadViralVideoFiles(); } }}
+                    >
+                      {template.img ? (
+                        <img className="select-card-cover" src={template.img} alt={template.name}
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }}
+                        />
+                      ) : null}
+                      <div className={`select-card-cover-placeholder ${template.img ? 'hidden' : ''}`}>📝</div>
+                      <div className="select-card-info">
+                        <div className="select-card-title">{template.name}</div>
+                        <div className="select-card-desc">
+                          {template.name === '自定义' ? (
+                            <div>从云盘选择爆款SRT文件，自动生成学习模型</div>
+                          ) : (
+                            <>
+                              <div>类型: {template.narrator_type || template.type}</div>
+                              <div>语言: {template.language || '中文'}</div>
+                              {template.tags && <div>标签: {template.tags}</div>}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
 
             {isCustomTemplate && (
               <div className="cloud-file-section">
@@ -3464,6 +3557,11 @@ function LoadApp() {
         if (!selectedMovie) return false;
         if (!isCustomMovie) return true;
         if (!customMovieName.trim()) return false;
+        // 原创模式电影搜索必填校验（仅冷门新剧可选，其余原创必填）
+        if (copywritingType === 'original' && isCustomMovie) {
+          const searchOptional = originalMode === '冷门新剧';
+          if (!searchOptional && !confirmedMovieJson) return false;
+        }
         if (isShortDrama) return episodePairs.length > 0;
         return !!selectedEpisodeSrtFile && !!selectedEpisodeVideoFile;
       }
