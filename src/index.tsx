@@ -1388,31 +1388,6 @@ function LoadApp() {
     setEstimateResult(null);
     setEstimateModalVisible(true);
 
-    if (_isOriginal) {
-      // 原创文案：客户端直接计算点数（无需调用后端 estimatePoints API）
-      // 极速版: 5点/千字, 旗舰版: 15点/千字, 基于爆款SRT字数
-      try {
-        const rate = originalModel === 'flash' ? 5 : 15;
-        // 构造一个模拟的估算结果
-        const mockResult: IEstimatePointsResponse = {
-          viral_learning_points: null,
-          commentary_generation_points: null,
-          video_synthesis_points: null,
-          refine_srt_gaps_points: null,
-          total_consume_points: 0,
-          visual_template_points: null,
-          template_points: null,
-          text_model_points: rate
-        };
-        setEstimateResult(mockResult);
-      } catch (err: any) {
-        setEstimateError(err?.message || '预估点数失败');
-      } finally {
-        setEstimateLoading(false);
-      }
-      return;
-    }
-
     const srtOssKey = _isCustomMovie && !isShortDrama ? (selectedEpisodeSrtFile!.file_id) : selectedMovie.srt_file_id;
     const videoOssKey = _isCustomMovie && !isShortDrama ? (selectedEpisodeVideoFile?.file_id || selectedEpisodeSrtFile!.file_id) : selectedMovie.video_file_id;
 
@@ -1433,6 +1408,8 @@ function LoadApp() {
     const requestParams: any = {
       episodes_data: estimateEpisodesData,
       model_version: _isCustomTemplate ? modelVersion : 'standard',
+      narrator_type: narratorType,
+      ...(_isOriginal ? { text_model: originalModel } : {}),
       ...(_isCustomTemplate
         ? { learning_srt: selectedViralSrtFile!.file_id }
         : { learning_model_id: selectedTemplate!.learning_model_id })
@@ -1900,7 +1877,7 @@ function LoadApp() {
           <div className="estimate-header">
             <div className="estimate-header-icon">💰</div>
             <div className="estimate-header-title">预估消耗点数</div>
-            <div className="estimate-header-subtitle">以下为本次订单预估消耗，实际消耗以执行结果为准</div>
+            <div className="estimate-header-subtitle">以下为当前任务预估消耗，实际消耗以执行结果为准</div>
           </div>
 
           {estimateLoading && (
@@ -1923,41 +1900,41 @@ function LoadApp() {
           {estimateResult && !estimateLoading && !estimateError && (
             <>
               <div className="estimate-detail-list">
-                {estimateResult.viral_learning_points != null && estimateResult.viral_learning_points > 0 && (
-                  <div className="estimate-detail-row">
-                    <span className="estimate-detail-label"><span className="estimate-icon">🧠</span>爆款模型学习</span>
-                    <span className="estimate-detail-value">{estimateResult.viral_learning_points}<small> 点</small></span>
-                  </div>
-                )}
-                {estimateResult.commentary_generation_points != null && estimateResult.commentary_generation_points > 0 && (
-                  <div className="estimate-detail-row">
-                    <span className="estimate-detail-label"><span className="estimate-icon">📝</span>文案生成</span>
-                    <span className="estimate-detail-value">{estimateResult.commentary_generation_points}<small> 点</small></span>
-                  </div>
-                )}
-                {estimateResult.video_synthesis_points != null && estimateResult.video_synthesis_points > 0 && (
-                  <div className="estimate-detail-row">
-                    <span className="estimate-detail-label"><span className="estimate-icon">🎬</span>视频合成</span>
-                    <span className="estimate-detail-value">{estimateResult.video_synthesis_points}<small> 点</small></span>
-                  </div>
-                )}
-                {estimateResult.refine_srt_gaps_points != null && estimateResult.refine_srt_gaps_points > 0 && (
-                  <div className="estimate-detail-row">
-                    <span className="estimate-detail-label"><span className="estimate-icon">🔍</span>AI场景洞察</span>
-                    <span className="estimate-detail-value">{estimateResult.refine_srt_gaps_points}<small> 点</small></span>
-                  </div>
-                )}
-                {estimateResult.text_model_points != null && estimateResult.text_model_points > 0 && (
-                  <div className="estimate-detail-row">
-                    <span className="estimate-detail-label"><span className="estimate-icon">📄</span>文本模型</span>
-                    <span className="estimate-detail-value">{estimateResult.text_model_points}<small> 点</small></span>
-                  </div>
-                )}
+                {(() => {
+                  const isCustomTpl = selectedTemplate?.name === '自定义';
+                  if (copywritingType === 'original') {
+                    return (
+                      <div className="estimate-detail-row">
+                        <span className="estimate-detail-label"><span className="estimate-icon">📄</span>原创文案</span>
+                        <span className="estimate-detail-value">{estimateResult.text_model_points ?? 0}<small> 点</small></span>
+                      </div>
+                    );
+                  } else if (isCustomTpl) {
+                    return (
+                      <div className="estimate-detail-row">
+                        <span className="estimate-detail-label"><span className="estimate-icon">🧠</span>爆款模型学习</span>
+                        <span className="estimate-detail-value">{estimateResult.viral_learning_points ?? 0}<small> 点</small></span>
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div className="estimate-detail-row">
+                        <span className="estimate-detail-label"><span className="estimate-icon">📝</span>解说文案</span>
+                        <span className="estimate-detail-value">{estimateResult.commentary_generation_points ?? 0}<small> 点</small></span>
+                      </div>
+                    );
+                  }
+                })()}
               </div>
 
               <div className="estimate-total-row">
-                <span className="estimate-total-label">预估总消耗</span>
-                <span className="estimate-total-value">{estimateResult.total_consume_points}<small> 点</small></span>
+                <span className="estimate-total-label">本次消耗</span>
+                <span className="estimate-total-value">{(() => {
+                  const isCustomTpl = selectedTemplate?.name === '自定义';
+                  if (copywritingType === 'original') return estimateResult.text_model_points ?? 0;
+                  if (isCustomTpl) return estimateResult.viral_learning_points ?? 0;
+                  return estimateResult.commentary_generation_points ?? 0;
+                })()}<small> 点</small></span>
               </div>
 
               {userInfo && (
