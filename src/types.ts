@@ -10,6 +10,8 @@ export interface IMovie {
   cover: string;
   character_name: string | null;
   remark: string | null;
+  year?: string;
+  title?: string;
 }
 
 // 解说模板

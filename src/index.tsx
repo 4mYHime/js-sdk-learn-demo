@@ -92,6 +92,33 @@ function LoadApp() {
   const [movieSearchModalVisible, setMovieSearchModalVisible] = useState(false);
   const [confirmedMovieJson, setConfirmedMovieJson] = useState<IMovieSearchResult | null>(null);
 
+  // 解析 character_name（JSON数组字符串）取第一个演员名
+  const parseFirstCharacterName = (characterName: string | null): string => {
+    if (!characterName) return '';
+    try {
+      const arr = JSON.parse(characterName);
+      if (Array.isArray(arr) && arr.length > 0) return arr[0];
+    } catch { /* not JSON, use as-is */ }
+    return characterName;
+  };
+
+  // 从系统爆款电影构建 confirmed_movie_json
+  const buildConfirmedMovieJsonFromMovie = (movie: IMovie): IMovieSearchResult => {
+    let stars: string[] = [];
+    if (movie.character_name) {
+      try { stars = JSON.parse(movie.character_name); } catch { stars = [movie.character_name]; }
+    }
+    return {
+      year: movie.year || '',
+      genre: movie.type || '',
+      stars,
+      title: movie.title || '',
+      summary: movie.story_info || '',
+      director: '',
+      local_title: movie.name
+    };
+  };
+
   // 搜索电影信息（原创文案 + 自定义电影时使用）
   const handleSearchMovies = useCallback(async (query: string) => {
     if (!query.trim()) return;
@@ -167,6 +194,7 @@ function LoadApp() {
   const [estimateResult, setEstimateResult] = useState<IEstimatePointsResponse | null>(null);
   const [estimateLoading, setEstimateLoading] = useState(false);
   const [estimateError, setEstimateError] = useState('');
+  const [pendingConfirmInfo, setPendingConfirmInfo] = useState<{ orderId: string; taskType: string } | null>(null);
 
   // 刷新订单状态
   const [refreshingOrders, setRefreshingOrders] = useState(false);
@@ -911,6 +939,54 @@ function LoadApp() {
     // 确认后自动恢复工作流
     resumeOrderWorkflow(orderId);
   };
+
+  // 预估下一个任务点数后再确认（分段式交付）
+  const handleEstimateForConfirm = async (orderId: string, taskType: string) => {
+    const order = getOrder(orderId);
+    if (!order) return;
+
+    setPendingConfirmInfo({ orderId, taskType });
+    setEstimateLoading(true);
+    setEstimateError('');
+    setEstimateResult(null);
+    setEstimateModalVisible(true);
+
+    const episodesData = order.episodesData?.length > 0
+      ? order.episodesData
+      : [{
+          num: 1,
+          srt_oss_key: order.videoSrtPath,
+          video_oss_key: order.videoPath || order.videoSrtPath,
+          negative_oss_key: order.videoPath || order.videoSrtPath
+        }];
+
+    const isOriginal = order.copywritingType === 'original';
+    const isCustomTpl = order.templateSource === 'generate';
+
+    const requestParams: any = {
+      episodes_data: episodesData,
+      model_version: order.modelVersion || 'standard',
+      narrator_type: order.narratorType || 'movie',
+      ...(isOriginal ? { text_model: order.originalModel } : {}),
+      ...(order.learningModelId
+        ? { learning_model_id: order.learningModelId }
+        : isCustomTpl && order.viralSrtPath
+          ? { learning_srt: order.viralSrtPath }
+          : { learning_model_id: order.templateId })
+    };
+
+    try {
+      const result = await estimatePoints({
+        app_key: order.appKey,
+        request_params: requestParams
+      });
+      setEstimateResult(result);
+    } catch (err: any) {
+      setEstimateError(err?.message || '预估点数失败，请重试');
+    } finally {
+      setEstimateLoading(false);
+    }
+  };
   
   // 重试失败的任务（重新提交当前节点任务）
   const retryFailedTask = useCallback(async (orderId: string, taskType: TaskType) => {
@@ -1350,6 +1426,7 @@ function LoadApp() {
   
   // 预估点数：点击"开始生成视频"时先调用
   const handleEstimatePoints = async () => {
+    setPendingConfirmInfo(null);
     const _isOriginal = copywritingType === 'original';
     if (!selectedMovie || !selectedBGM || !selectedDubbing || !selectedTemplate) {
       setErrorMessage('请完成所有配置');
@@ -1502,7 +1579,7 @@ function LoadApp() {
         dubbingId: selectedDubbing.name === '自定义' ? customDubbingText.trim() : selectedDubbing.dubbing_id,
         dubbingName: selectedDubbing.name === '自定义' ? customDubbingText.trim() : selectedDubbing.name,
         targetPlatform: targetPlatform,
-        targetCharacterName: targetCharacterName || selectedMovie.character_name || '主角',
+        targetCharacterName: targetCharacterName || parseFirstCharacterName(selectedMovie.character_name) || '主角',
         vendorRequirements: vendorRequirements || `投放在${targetPlatform}，吸引18-35岁的年轻用户观看。`,
         storyInfo: selectedMovie.story_info || '',
         deliveryMode: deliveryMode,
@@ -1517,7 +1594,9 @@ function LoadApp() {
         originalMode: isOriginal ? originalMode : '',
         originalLanguage: isOriginal ? originalLanguage : '',
         originalModel: isOriginal ? originalModel : 'flash',
-        confirmedMovieJson: isOriginal ? confirmedMovieJson : null
+        confirmedMovieJson: isOriginal
+          ? (confirmedMovieJson || (!_isCustomMovie && selectedMovie ? buildConfirmedMovieJsonFromMovie(selectedMovie) : null))
+          : null
       });
       
       if (isOriginal) {
@@ -1539,8 +1618,8 @@ function LoadApp() {
           playlet_name: _isCustomMovie ? (customMovieName.trim() || '自定义') : selectedMovie.name,
           episodes_data: osEpisodesData,
           learning_model_id: osLearningModelId,
-          confirmed_movie_json: confirmedMovieJson,
-          target_character_name: targetCharacterName || selectedMovie.character_name || '主角名'
+          confirmed_movie_json: confirmedMovieJson || (!_isCustomMovie && selectedMovie ? buildConfirmedMovieJsonFromMovie(selectedMovie) : null),
+          target_character_name: targetCharacterName || parseFirstCharacterName(selectedMovie.character_name) || '主角名'
         });
 
         const osTask: ITask = {
@@ -1595,7 +1674,7 @@ function LoadApp() {
           playlet_num: orderEpisodesData.map(e => e.num).join(','),
           target_platform: targetPlatform,
           task_count: 1,
-          target_character_name: targetCharacterName || selectedMovie.character_name || '主角',
+          target_character_name: targetCharacterName || parseFirstCharacterName(selectedMovie.character_name) || '主角',
           refine_srt_gaps: "0",
           vendor_requirements: vendorRequirements || `投放在${targetPlatform}，吸引18-35岁的年轻用户观看。`,
           story_info: selectedMovie.story_info || ''
@@ -1899,43 +1978,53 @@ function LoadApp() {
 
           {estimateResult && !estimateLoading && !estimateError && (
             <>
-              <div className="estimate-detail-list">
-                {(() => {
+              {(() => {
+                let taskLabel = '';
+                let taskIcon = '';
+                let taskPoints = 0;
+
+                if (pendingConfirmInfo) {
+                  // 确认任务场景：根据当前完成的任务类型推断下一个任务
+                  const t = pendingConfirmInfo.taskType;
+                  if (t === 'viral_learn') {
+                    taskLabel = '解说文案'; taskIcon = '📝'; taskPoints = estimateResult.commentary_generation_points ?? 0;
+                  } else if (t === 'script') {
+                    taskLabel = '剪辑脚本'; taskIcon = '✂️'; taskPoints = estimateResult.video_synthesis_points ?? 0;
+                  } else if (t === 'clip') {
+                    taskLabel = '视频合成'; taskIcon = '🎬'; taskPoints = estimateResult.video_synthesis_points ?? 0;
+                  } else if (t === 'original_script') {
+                    taskLabel = '原创剪辑'; taskIcon = '✂️'; taskPoints = estimateResult.video_synthesis_points ?? 0;
+                  } else if (t === 'original_clip') {
+                    taskLabel = '视频合成'; taskIcon = '🎬'; taskPoints = estimateResult.video_synthesis_points ?? 0;
+                  }
+                } else {
+                  // 创建订单场景：根据文案类型和模板类型决定第一个任务
                   const isCustomTpl = selectedTemplate?.name === '自定义';
                   if (copywritingType === 'original') {
-                    return (
-                      <div className="estimate-detail-row">
-                        <span className="estimate-detail-label"><span className="estimate-icon">📄</span>原创文案</span>
-                        <span className="estimate-detail-value">{estimateResult.text_model_points ?? 0}<small> 点</small></span>
-                      </div>
-                    );
+                    taskLabel = '原创文案'; taskIcon = '📄'; taskPoints = estimateResult.text_model_points ?? 0;
                   } else if (isCustomTpl) {
-                    return (
-                      <div className="estimate-detail-row">
-                        <span className="estimate-detail-label"><span className="estimate-icon">🧠</span>爆款模型学习</span>
-                        <span className="estimate-detail-value">{estimateResult.viral_learning_points ?? 0}<small> 点</small></span>
-                      </div>
-                    );
+                    taskLabel = '爆款模型学习'; taskIcon = '🧠'; taskPoints = estimateResult.viral_learning_points ?? 0;
                   } else {
-                    return (
-                      <div className="estimate-detail-row">
-                        <span className="estimate-detail-label"><span className="estimate-icon">📝</span>解说文案</span>
-                        <span className="estimate-detail-value">{estimateResult.commentary_generation_points ?? 0}<small> 点</small></span>
-                      </div>
-                    );
+                    taskLabel = '解说文案'; taskIcon = '📝'; taskPoints = estimateResult.commentary_generation_points ?? 0;
                   }
-                })()}
-              </div>
+                }
 
-              <div className="estimate-total-row">
-                <span className="estimate-total-label">本次消耗</span>
-                <span className="estimate-total-value">{(() => {
-                  const isCustomTpl = selectedTemplate?.name === '自定义';
-                  if (copywritingType === 'original') return estimateResult.text_model_points ?? 0;
-                  if (isCustomTpl) return estimateResult.viral_learning_points ?? 0;
-                  return estimateResult.commentary_generation_points ?? 0;
-                })()}<small> 点</small></span>
-              </div>
+                return (
+                  <>
+                    <div className="estimate-detail-list">
+                      <div className="estimate-detail-row">
+                        <span className="estimate-detail-label"><span className="estimate-icon">{taskIcon}</span>{taskLabel}</span>
+                        <span className="estimate-detail-value">{taskPoints}<small> 点</small></span>
+                      </div>
+                    </div>
+
+                    <div className="estimate-total-row">
+                      <span className="estimate-total-label">本次消耗</span>
+                      <span className="estimate-total-value">{taskPoints}<small> 点</small></span>
+                    </div>
+                  </>
+                );
+              })()}
 
               {userInfo && (
                 <div className="estimate-balance-hint">
@@ -1944,8 +2033,16 @@ function LoadApp() {
               )}
 
               <div className="estimate-actions">
-                <button className="estimate-btn estimate-btn-cancel" onClick={() => setEstimateModalVisible(false)}>取消</button>
-                <button className="estimate-btn estimate-btn-confirm" onClick={executeWorkflow}>确认并开始</button>
+                <button className="estimate-btn estimate-btn-cancel" onClick={() => { setEstimateModalVisible(false); setPendingConfirmInfo(null); }}>取消</button>
+                <button className="estimate-btn estimate-btn-confirm" onClick={() => {
+                  if (pendingConfirmInfo) {
+                    setEstimateModalVisible(false);
+                    confirmTask(pendingConfirmInfo.orderId, pendingConfirmInfo.taskType);
+                    setPendingConfirmInfo(null);
+                  } else {
+                    executeWorkflow();
+                  }
+                }}>确认并开始</button>
               </div>
             </>
           )}
@@ -2415,7 +2512,15 @@ function LoadApp() {
                     <div
                       key={movie.id}
                       className={`select-card ${selectedMovie?.id === movie.id ? 'selected' : ''}`}
-                      onClick={() => { setSelectedMovie(movie); setMovieListExpanded(false); }}
+                      onClick={() => {
+                        setSelectedMovie(movie);
+                        setMovieListExpanded(false);
+                        if (movie.name !== '自定义') {
+                          setConfirmedMovieJson(buildConfirmedMovieJsonFromMovie(movie));
+                        } else {
+                          setConfirmedMovieJson(null);
+                        }
+                      }}
                     >
                       {movie.cover ? (
                         <img className="select-card-cover" src={movie.cover} alt={movie.name}
@@ -3146,7 +3251,7 @@ function LoadApp() {
                 <div className="form-group">
                   <label className="form-label">主角名称 {narratorType.startsWith('first_person') ? <span style={{ color: '#ff4d4f' }}>*必填</span> : '(可选)'}</label>
                   <Input
-                    placeholder={selectedMovie?.character_name || '主角'}
+                    placeholder={parseFirstCharacterName(selectedMovie?.character_name ?? null) || '主角'}
                     value={targetCharacterName}
                     onChange={(e) => setTargetCharacterName(e.target.value)}
                   />
@@ -3862,7 +3967,7 @@ function LoadApp() {
                   <div className="task-confirm-title">
                     {task.type === 'viral_learn' ? `🧠 爆款模型已生成，模型ID: ${task.result?.api_response?.data?.results?.order_info?.learning_model_id || '未知'}` : task.type === 'script' ? '📝 解说文案已生成，请确认' : '✂️ 剪辑脚本已生成，请确认'}
                   </div>
-                  <Button type="primary" size="small" style={{ borderRadius: 8 }} onClick={() => confirmTask(currentOrder.id, task.type)}>
+                  <Button type="primary" size="small" style={{ borderRadius: 8 }} onClick={() => handleEstimateForConfirm(currentOrder.id, task.type)}>
                     确认并继续下一步
                   </Button>
                 </div>
