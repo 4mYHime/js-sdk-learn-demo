@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
-import { Steps, Button, Card, List, Avatar, Alert, Select, Input, Spin, Result, Tag, Empty, Radio, message, Tooltip } from 'antd';
+import { Steps, Button, Card, List, Avatar, Alert, Select, Input, Spin, Result, Tag, Empty, Radio, message, Tooltip, Modal } from 'antd';
 import { IMovie, INarratorTemplate, IBGM, IDubbing, IEpisodeData, ICloudFile, IPreUploadFile, IPreUploadResponse, IEstimatePointsResponse, IMovieSearchResult } from './types';
 import { fetchMovies } from './api/movies';
 import { fetchTemplates } from './api/templates';
@@ -33,6 +33,7 @@ function LoadApp() {
   const [page, setPage] = useState<PageType>('login');
   const [appKey, setAppKey] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [showContactModal, setShowContactModal] = useState(false);
   const [orders, setOrders] = useState<IOrder[]>([]);
   const [currentOrder, setCurrentOrder] = useState<IOrder | null>(null);
   const pollingRef = useRef<boolean>(false);
@@ -82,7 +83,7 @@ function LoadApp() {
 
   // 原创文案相关状态
   const [copywritingType, setCopywritingType] = useState<'secondary' | 'original'>('secondary');
-  const [originalMode, setOriginalMode] = useState<'2' | '3'>('3');
+  const [originalMode, setOriginalMode] = useState('热门影视');
   const [originalLanguage, setOriginalLanguage] = useState('中文');
   const [originalModel, setOriginalModel] = useState<'flash' | 'standard'>('flash');
   const [movieSearchQuery, setMovieSearchQuery] = useState('');
@@ -613,7 +614,16 @@ function LoadApp() {
           console.log('创建剪辑任务，订单号:', scriptTask.orderNum);
           updateOrderStatus(orderId, 'clip');
           setCurrentOrder(getOrder(orderId));
-          
+
+          // 【防重复】先写入 pending 占位任务，再调用 API
+          const placeholderClipTask: ITask = {
+            type: 'clip', taskId: '', orderNum: '',
+            status: 'pending', pollCount: 0, elapsedTime: 0,
+            result: null, errorMessage: '', createdAt: Date.now(), completedAt: null
+          };
+          updateOrderTask(orderId, placeholderClipTask);
+          setCurrentOrder(getOrder(orderId));
+
           const clipResponse = await generateClip({
             app_key: order.appKey,
             bgm: order.bgmId,
@@ -648,7 +658,16 @@ function LoadApp() {
           console.log('创建视频任务，订单号:', clipTask.orderNum);
           updateOrderStatus(orderId, 'video');
           setCurrentOrder(getOrder(orderId));
-          
+
+          // 【防重复】先写入 pending 占位任务，再调用 API
+          const placeholderVideoTask: ITask = {
+            type: 'video', taskId: '', orderNum: '',
+            status: 'pending', pollCount: 0, elapsedTime: 0,
+            result: null, errorMessage: '', createdAt: Date.now(), completedAt: null
+          };
+          updateOrderTask(orderId, placeholderVideoTask);
+          setCurrentOrder(getOrder(orderId));
+
           const videoResponse = await synthesizeVideo({
             order_num: clipTask.orderNum,
             app_key: order.appKey
@@ -677,6 +696,15 @@ function LoadApp() {
           }
           console.log('创建原创剪辑任务，文案任务ID:', originalScriptTask.taskId, 'file_id:', origFileId);
           updateOrderStatus(orderId, 'original_clip');
+          setCurrentOrder(getOrder(orderId));
+
+          // 【防重复】先写入 pending 占位任务，再调用 API
+          const placeholderOcTask: ITask = {
+            type: 'original_clip', taskId: '', orderNum: '',
+            status: 'pending', pollCount: 0, elapsedTime: 0,
+            result: null, errorMessage: '', createdAt: Date.now(), completedAt: null
+          };
+          updateOrderTask(orderId, placeholderOcTask);
           setCurrentOrder(getOrder(orderId));
 
           const ocEpisodesData = order.episodesData?.length > 0
@@ -721,6 +749,15 @@ function LoadApp() {
           updateOrderStatus(orderId, 'video');
           setCurrentOrder(getOrder(orderId));
 
+          // 【防重复】先写入 pending 占位任务，再调用 API
+          const placeholderOcVideoTask: ITask = {
+            type: 'video', taskId: '', orderNum: '',
+            status: 'pending', pollCount: 0, elapsedTime: 0,
+            result: null, errorMessage: '', createdAt: Date.now(), completedAt: null
+          };
+          updateOrderTask(orderId, placeholderOcVideoTask);
+          setCurrentOrder(getOrder(orderId));
+
           const ocVideoResponse = await synthesizeVideo({
             order_num: originalClipTask.orderNum,
             app_key: order.appKey
@@ -742,9 +779,15 @@ function LoadApp() {
           setCurrentOrder(getOrder(orderId));
           break;
           
+        } else if (order.tasks.some(t => t.status === 'pending')) {
+          // 有占位任务（API调用进行中），等待后重试
+          console.log('有占位任务，等待API响应:', order.tasks.filter(t => t.status === 'pending').map(t => t.type));
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+
         } else {
           // 未知状态，标记为error并退出，防止无限重试
-          console.warn('订单状态异常，无法继续:', order.status, order.tasks.map(t => `${t.type}:${t.status}`));
+          console.warn('订单状态异常，无法继续:', order.status, JSON.stringify(order.tasks.map(t => ({ type: t.type, status: t.status, taskId: t.taskId }))));
           updateOrderStatus(orderId, 'error', '订单状态异常，无法继续执行。请检查任务数据或重新创建订单。');
           setCurrentOrder(getOrder(orderId));
           break;
@@ -899,8 +942,8 @@ function LoadApp() {
         case 'viral_learn': {
           const response = await generateViralModel({
             app_key: order.appKey,
-            video_path: order.videoPath,
-            video_srt_path: order.videoSrtPath,
+            video_srt_path: order.viralSrtPath || order.videoSrtPath,
+            ...(order.viralVideoPath ? { video_path: order.viralVideoPath } : {}),
             narrator_type: order.narratorType,
             model_version: order.modelVersion
           });
@@ -961,7 +1004,7 @@ function LoadApp() {
             model: order.originalModel || 'flash',
             language: order.originalLanguage || '中文',
             perspective: 'third_person',
-            target_mode: (order.originalMode as '1' | '2' | '3') || '3',
+            target_mode: order.originalMode || '热门影视',
             learning_srt: learningSrt,
             playlet_name: order.movieName,
             episodes_data: osEpisodesData,
@@ -1064,6 +1107,65 @@ function LoadApp() {
     }
   }, [resumeOrderWorkflow, appKey]);
 
+  // 恢复异常订单（通用恢复机制：订单error但任务流程未完成）
+  const resumeErrorOrder = useCallback((orderId: string) => {
+    const order = getOrder(orderId);
+    if (!order || order.status !== 'error') return;
+
+    // 根据任务状态推断应恢复到的订单阶段
+    const runningOrPending = order.tasks.find(t => t.status === 'running' || t.status === 'pending');
+    let resumeStatus: OrderStatus = 'pending';
+
+    if (runningOrPending) {
+      // 有中断的任务，恢复到该任务阶段
+      const statusMap: Record<string, OrderStatus> = {
+        viral_learn: 'viral_learn', script: 'script', clip: 'clip',
+        video: 'video', original_script: 'original_script', original_clip: 'original_clip'
+      };
+      resumeStatus = statusMap[runningOrPending.type] || 'pending';
+    } else {
+      // 所有任务都是done，推断下一步应该创建的任务阶段
+      const doneTasks = order.tasks.filter(t => t.status === 'done').map(t => t.type);
+      const hasVideo = doneTasks.includes('video');
+      const hasClip = doneTasks.includes('clip');
+      const hasScript = doneTasks.includes('script');
+      const hasViralLearn = doneTasks.includes('viral_learn');
+      const hasOriginalClip = doneTasks.includes('original_clip');
+      const hasOriginalScript = doneTasks.includes('original_script');
+
+      if (hasVideo) {
+        resumeStatus = 'done'; // 实际上不应该到这里，但安全兜底
+      } else if (hasClip || hasOriginalClip) {
+        resumeStatus = 'video';
+      } else if (hasScript) {
+        resumeStatus = 'clip';
+      } else if (hasOriginalScript) {
+        resumeStatus = 'original_clip';
+      } else if (hasViralLearn) {
+        resumeStatus = 'script';
+      } else {
+        resumeStatus = 'pending';
+      }
+    }
+
+    // 清理 error 状态的占位任务（让状态机重新创建）
+    const errorTasks = order.tasks.filter(t => t.status === 'error' && !t.taskId);
+    errorTasks.forEach(t => {
+      const idx = order.tasks.indexOf(t);
+      if (idx !== -1) order.tasks.splice(idx, 1);
+    });
+
+    order.errorMessage = '';
+    order.status = resumeStatus;
+    order.updatedAt = Date.now();
+    saveOrder(order);
+    setCurrentOrder(getOrder(orderId));
+
+    if (resumeStatus !== 'done') {
+      resumeOrderWorkflow(orderId);
+    }
+  }, [resumeOrderWorkflow]);
+
   // 重试订单（订单创建时首个任务API调用失败，tasks为空的情况）
   const [retryingOrder, setRetryingOrder] = useState(false);
   const retryOrderCreation = useCallback(async (orderId: string) => {
@@ -1088,7 +1190,7 @@ function LoadApp() {
           model: order.originalModel || 'flash',
           language: order.originalLanguage || '中文',
           perspective: 'third_person',
-          target_mode: (order.originalMode as '1' | '2' | '3') || '3',
+          target_mode: order.originalMode || '热门影视',
           learning_srt: learningSrt,
           playlet_name: order.movieName,
           episodes_data: osEpisodesData,
@@ -1111,7 +1213,7 @@ function LoadApp() {
         const viralResponse = await generateViralModel({
           app_key: order.appKey,
           video_srt_path: order.viralSrtPath || order.videoSrtPath,
-          ...(order.videoPath ? { video_path: order.videoPath } : {}),
+          ...(order.viralVideoPath ? { video_path: order.viralVideoPath } : {}),
           narrator_type: order.narratorType,
           model_version: order.modelVersion
         });
@@ -1193,7 +1295,7 @@ function LoadApp() {
     setNarratorType('movie');
     setModelVersion('standard');
     setCopywritingType('secondary');
-    setOriginalMode('3');
+    setOriginalMode('热门影视');
     setOriginalLanguage('中文');
     setOriginalModel('flash');
     setMovieSearchQuery('');
@@ -1424,6 +1526,7 @@ function LoadApp() {
         videoPath: isShortDrama ? (episodePairs[0]?.video.file_id || '') : videoOssKey,
         videoSrtPath: isShortDrama ? (episodePairs[0]?.srt.file_id || '') : srtOssKey,
         viralSrtPath: _isCustomTemplate ? selectedViralSrtFile!.file_id : (isOriginal ? srtOssKey : ''),
+        viralVideoPath: _isCustomTemplate && selectedViralVideoFile ? selectedViralVideoFile.file_id : '',
         narratorType: narratorType,
         modelVersion: modelVersion,
         episodesData: orderEpisodesData,
@@ -1570,7 +1673,7 @@ function LoadApp() {
     setNarratorType('movie');
     setModelVersion('standard');
     setCopywritingType('secondary');
-    setOriginalMode('3');
+    setOriginalMode('热门影视');
     setOriginalLanguage('中文');
     setOriginalModel('flash');
     setMovieSearchQuery('');
@@ -2189,71 +2292,84 @@ function LoadApp() {
 
             <div style={{ marginBottom: 12 }}>
               <label className="form-label">文案类型</label>
-              <Radio.Group value={copywritingType} onChange={(e) => {
-                setCopywritingType(e.target.value);
-                setSelectedTemplate(null);
-                setSelectedViralSrtFile(null);
-                setSelectedViralVideoFile(null);
-                setConfirmedMovieJson(null);
-                if (e.target.value === 'original') {
-                  // 原创文案纯解说不支持短剧
-                  if (narratorType === 'short_drama' && originalMode === '3') {
-                    setOriginalMode('2');
-                  }
-                }
-              }}>
-                <Radio value="secondary">二创文案</Radio>
-                <Radio value="original">原创文案</Radio>
-              </Radio.Group>
-            </div>
+              <Radio.Group
+                value={copywritingType === 'secondary' ? 'secondary' : `original_${originalMode}`}
+                onChange={(e) => {
+                  const val = e.target.value as string;
+                  setSelectedTemplate(null);
+                  setSelectedViralSrtFile(null);
+                  setSelectedViralVideoFile(null);
+                  setConfirmedMovieJson(null);
+                  setMovieSearchResults([]);
 
-            {copywritingType === 'original' && (
-              <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <label className="form-label">原创模式</label>
-                  <Select style={{ width: '100%' }} value={originalMode} onChange={(v: '2' | '3') => {
-                    setOriginalMode(v);
-                    if (v === '3' && narratorType === 'short_drama') {
+                  if (val === 'secondary') {
+                    setCopywritingType('secondary');
+                  } else if (val === 'original_热门影视') {
+                    setCopywritingType('original');
+                    setOriginalMode('热门影视');
+                    if (narratorType === 'short_drama') {
                       setNarratorType('movie');
                       setSelectedMovie(null);
                       setEpisodePairs([]);
                     }
-                  }}
-                    options={[
-                      { label: '纯解说（仅电影）', value: '3' },
-                      { label: '原声混剪（电影+短剧）', value: '2' }
-                    ]}
-                  />
-                </div>
-              </div>
-            )}
+                  } else if (val === 'original_原声混剪') {
+                    setCopywritingType('original');
+                    setOriginalMode('原声混剪');
+                  } else if (val === 'original_冷门新剧') {
+                    setCopywritingType('original');
+                    setOriginalMode('冷门新剧');
+                    if (narratorType !== 'short_drama') {
+                      setNarratorType('short_drama');
+                      setSelectedMovie(null);
+                      setSelectedEpisodeSrtFile(null);
+                      setSelectedEpisodeVideoFile(null);
+                      setCustomMovieName('');
+                      setEpisodePairs([]);
+                    }
+                  }
+                }}
+                optionType="button"
+                buttonStyle="solid"
+                style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}
+              >
+                <Radio.Button value="secondary" style={{ textAlign: 'center', borderRadius: 8 }}>二创文案</Radio.Button>
+                <Radio.Button value="original_热门影视" style={{ textAlign: 'center', borderRadius: 8 }}>原创·纯解说</Radio.Button>
+                <Radio.Button value="original_原声混剪" style={{ textAlign: 'center', borderRadius: 8 }}>原创·原声混剪</Radio.Button>
+                <Radio.Button value="original_冷门新剧" style={{ textAlign: 'center', borderRadius: 8 }}>原创·冷门新剧</Radio.Button>
+              </Radio.Group>
+            </div>
 
             <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
               <div style={{ flex: 1 }}>
                 <label className="form-label">解说类型</label>
-                <Select style={{ width: '100%' }} value={narratorType} onChange={(v: string) => {
-                  setNarratorType(v);
-                  setSelectedTemplate(null);
-                  setSelectedMovie(null);
-                  setSelectedEpisodeSrtFile(null);
-                  setSelectedEpisodeVideoFile(null);
-                  setCustomMovieName('');
-                  setEpisodePairs([]);
-                }}
-                  options={copywritingType === 'original' && originalMode === '3'
-                    ? [
-                        { label: '电影', value: 'movie' },
-                        { label: '第一人称电影', value: 'first_person_movie' },
-                        { label: '多语种电影', value: 'multilingual' },
-                        { label: '第一人称多语种', value: 'first_person_multilingual' }
-                      ]
-                    : [
-                        { label: '电影', value: 'movie' },
-                        { label: '第一人称电影', value: 'first_person_movie' },
-                        { label: '多语种电影', value: 'multilingual' },
-                        { label: '第一人称多语种', value: 'first_person_multilingual' },
-                        { label: '短剧', value: 'short_drama' }
-                      ]
+                <Select style={{ width: '100%' }} value={narratorType}
+                  disabled={originalMode === '冷门新剧' && copywritingType === 'original'}
+                  onChange={(v: string) => {
+                    setNarratorType(v);
+                    setSelectedTemplate(null);
+                    setSelectedMovie(null);
+                    setSelectedEpisodeSrtFile(null);
+                    setSelectedEpisodeVideoFile(null);
+                    setCustomMovieName('');
+                    setEpisodePairs([]);
+                  }}
+                  options={
+                    copywritingType === 'original' && originalMode === '冷门新剧'
+                      ? [{ label: '短剧', value: 'short_drama' }]
+                      : copywritingType === 'original' && originalMode === '热门影视'
+                        ? [
+                            { label: '电影', value: 'movie' },
+                            { label: '第一人称电影', value: 'first_person_movie' },
+                            { label: '多语种电影', value: 'multilingual' },
+                            { label: '第一人称多语种', value: 'first_person_multilingual' }
+                          ]
+                        : [
+                            { label: '电影', value: 'movie' },
+                            { label: '第一人称电影', value: 'first_person_movie' },
+                            { label: '多语种电影', value: 'multilingual' },
+                            { label: '第一人称多语种', value: 'first_person_multilingual' },
+                            { label: '短剧', value: 'short_drama' }
+                          ]
                   }
                 />
               </div>
@@ -2306,7 +2422,7 @@ function LoadApp() {
                     {copywritingType === 'original' && (
                       <Button type="primary" loading={movieSearchLoading} disabled={!customMovieName.trim()}
                         onClick={() => handleSearchMovies(customMovieName)}>
-                        搜索电影
+                        搜索电影{(originalMode === '冷门新剧' || (originalMode === '原声混剪' && isShortDrama)) ? ' (可选)' : ''}
                       </Button>
                     )}
                   </div>
@@ -3267,7 +3383,7 @@ function LoadApp() {
                   )}
                   {copywritingType === 'original' && (
                     <>
-                      <p><strong>文案类型:</strong> 原创文案 ({originalMode === '2' ? '原声混剪' : '纯解说'})</p>
+                      <p><strong>文案类型:</strong> 原创文案 ({originalMode === '原声混剪' ? '原声混剪' : originalMode === '冷门新剧' ? '冷门新剧' : '纯解说'})</p>
                       <p className="hint">文案语言: {originalLanguage} | 文案模型: {originalModel === 'flash' ? '极速版' : '旗舰版'}</p>
                       {confirmedMovieJson && <p className="hint">电影信息: {confirmedMovieJson.local_title} ({confirmedMovieJson.year})</p>}
                     </>
@@ -3390,7 +3506,17 @@ function LoadApp() {
         <Button type="primary" size="large" block className="btn-primary-gradient" onClick={handleLogin}>
           登录
         </Button>
+        <div style={{ textAlign: 'center', marginTop: 16, fontSize: 13, color: '#999' }}>
+          还没有 App Key？<a onClick={() => setShowContactModal(true)} style={{ color: '#7c5cfc', cursor: 'pointer' }}>联系我们获取</a>
+        </div>
       </div>
+      <Modal open={showContactModal} onCancel={() => setShowContactModal(false)} footer={null} centered width={340}>
+        <div style={{ textAlign: 'center', padding: '16px 0' }}>
+          <img src="/contact-qrcode.png" alt="联系我们" style={{ width: 240, height: 240 }} />
+          <div style={{ marginTop: 12, fontSize: 14, color: '#666' }}>扫码添加企业微信</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: '#999' }}>咨询并获取 App Key</div>
+        </div>
+      </Modal>
     </div>
   );
   
@@ -3537,7 +3663,18 @@ function LoadApp() {
             </a>
           )}
           {currentOrder.errorMessage && (
-            <Alert type="error" message="错误信息" description={currentOrder.errorMessage} style={{ marginTop: 12 }} />
+            <Alert type="error" message="错误信息" description={
+              <>
+                {currentOrder.errorMessage}
+                {currentOrder.status === 'error' && currentOrder.tasks.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <Button size="small" type="primary" style={{ borderRadius: 8 }} onClick={() => resumeErrorOrder(currentOrder.id)}>
+                      🔄 继续执行
+                    </Button>
+                  </div>
+                )}
+              </>
+            } style={{ marginTop: 12 }} />
           )}
         </div>
         
@@ -3694,7 +3831,7 @@ function LoadApp() {
         style={{ marginBottom: 24 }}
         items={[
           { title: '选择电影' },
-          { title: copywritingType === 'original' ? '原创+模板' : (isCustomMovie ? '爆款模型' : '选择模板') },
+          { title: '选择模板' },
           { title: '配置' },
           { title: '执行' }
         ]}

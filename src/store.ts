@@ -48,12 +48,13 @@ export interface IOrder {
   videoPath: string;
   videoSrtPath: string;
   viralSrtPath: string;
+  viralVideoPath: string;
   narratorType: string;
   modelVersion: string;
   learningModelId: string;
   episodesData: Array<{ num: number; srt_oss_key: string; video_oss_key: string; negative_oss_key: string }>;
   copywritingType: 'secondary' | 'original';
-  originalMode: '2' | '3' | '';
+  originalMode: string;
   originalLanguage: string;
   originalModel: 'flash' | 'standard';
   confirmedMovieJson: import('./types').IMovieSearchResult | null;
@@ -197,11 +198,12 @@ export function createOrder(params: {
   videoPath?: string;
   videoSrtPath?: string;
   viralSrtPath?: string;
+  viralVideoPath?: string;
   narratorType?: string;
   modelVersion?: string;
   episodesData?: Array<{ num: number; srt_oss_key: string; video_oss_key: string; negative_oss_key: string }>;
   copywritingType?: 'secondary' | 'original';
-  originalMode?: '2' | '3' | '';
+  originalMode?: string;
   originalLanguage?: string;
   originalModel?: 'flash' | 'standard';
   confirmedMovieJson?: import('./types').IMovieSearchResult | null;
@@ -227,6 +229,7 @@ export function createOrder(params: {
     videoPath: params.videoPath || '',
     videoSrtPath: params.videoSrtPath || '',
     viralSrtPath: params.viralSrtPath || '',
+    viralVideoPath: params.viralVideoPath || '',
     narratorType: params.narratorType || '',
     modelVersion: params.modelVersion || '',
     learningModelId: '',

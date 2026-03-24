@@ -331,7 +331,7 @@ export interface IOriginalScriptRequest {
   model: 'flash' | 'standard';
   language: string;
   perspective: string;
-  target_mode: '1' | '2' | '3';
+  target_mode: string;
   learning_srt: string;
   playlet_name: string;
   episodes_data: Array<{ num: number; srt_oss_key: string }>;
