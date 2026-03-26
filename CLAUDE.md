@@ -21,7 +21,9 @@
 | UI 库 | Ant Design 5 |
 | HTTP | Axios |
 | 持久化 | localStorage + 后端同步 (fire-and-forget) |
-| 部署 | Fly.io — Docker 两阶段构建 (node:18 build → nginx:alpine serve) |
+| 部署 | Fly.io — Docker 两阶段构建 (node:18-alpine build → nginx:alpine serve) |
+
+> 注：`package.json` 名称为 `react-typescript`（源自 Replit 模板）。`i18next`、`react-i18next`、`@lark-base-open/js-sdk` 仅存在于 package.json，代码中未实际使用（历史遗留依赖）。
 
 ---
 
@@ -42,7 +44,7 @@ js-sdk-learn-demo/
 │       ├── templates.ts   # 解说模板 API
 │       ├── bgm.ts         # BGM 列表 API
 │       └── dubbing.ts     # 配音列表 API
-├── vite.config.js         # 开发环境 API 代理 (21 个 proxy 规则)
+├── vite.config.js         # 开发环境 API 代理 (25 个 proxy 规则)
 ├── nginx.conf             # 生产环境反向代理 (对应 vite proxy)
 ├── Dockerfile             # 两阶段构建
 ├── fly.toml               # Fly.io 部署配置 (app: narration-video-demo, region: sin)
@@ -52,10 +54,11 @@ js-sdk-learn-demo/
 
 ### 关键文件规模
 
-- `src/index.tsx` — **~4100 行**，单文件包含全部业务逻辑（状态、工作流、UI）
-- `src/api/tasks.ts` — **~440 行**，21 个 API token + 17 个 API 函数
-- `src/store.ts` — **~335 行**，数据模型和持久化
-- `src/types.ts` — **~450 行**，全部 TypeScript 接口定义
+- `src/index.tsx` — **~4120 行**，单文件包含全部业务逻辑（105 个 useState、5 个 useRef、9 个 useEffect）
+- `src/api/tasks.ts` — **~440 行**，24 个 API token + 22 个导出函数
+- `src/store.ts` — **~335 行**，数据模型（IOrder 36 字段、ITask 10 字段）和持久化（18 个导出函数）
+- `src/types.ts` — **~450 行**，34 个 TypeScript 接口定义
+- `src/styles.css` — **~1320 行**，全局样式（含 fadeIn 动画）
 
 ---
 
@@ -170,6 +173,8 @@ original_script → original_clip → video → 完成
 | `pollingRef` | 工作流互斥锁，防止并发执行 |
 | `abortRef` | 工作流取消信号 |
 | `viewingOrderIdRef` | 当前查看的订单ID，防止跨订单 UI 污染 |
+| `transferPollingRef` | 上传传输列表轮询控制 |
+| `audioRef` | 音频播放器引用（BGM/配音试听） |
 
 ---
 
@@ -193,7 +198,8 @@ original_script → original_clip → video → 完成
 | 上传任务 | `/api/upload_task/run` | 3mby87347p.coze.site | `upload_task` |
 | 传输列表 | `/api/transfer_list/run` | v6ztd4tn4r.coze.site | `transfer_list` |
 | 删除文件 | `/api/delete_file/run` | hptt42558m.coze.site | `delete_file` |
-| 更新预转存 | `/api/v2/files/upload/pre-transfer/edit` | openapi.jieshuo.cn | (app-key header) |
+| 更新预转存(Coze) | `/api/update_pre_file/run` | mj2dzv4fkn.coze.site | `update_pre_file` |
+| 更新预转存(直连) | `/api/v2/files/upload/pre-transfer/edit` | openapi.jieshuo.cn | (app-key header) |
 | 用户余额 | `/api/user_balance/run` | f9cmyyvhjx.coze.site | `user_balance` |
 | 云盘用量 | `/api/cloud_drive_usage/run` | ybm8p77ydh.coze.site | `cloud_drive_usage` |
 | 总点数预估 | `/api/estimate_points/run` | 3y69rshy4q.coze.site | `estimate_points` |
@@ -204,12 +210,22 @@ original_script → original_clip → video → 完成
 | 原创文案 | `/api/original_script/run` | knh3yghcjg.coze.site | `original_script` |
 | 原创剪辑 | `/api/original_clip/run` | b3k9vphmc4.coze.site | `original_clip` |
 
+### Nginx 超时分层
+
+生产环境 `nginx.conf` 按任务耗时分三档超时：
+
+| 超时档位 | 适用端点 | 说明 |
+|---------|---------|------|
+| 默认 | movies, templates, bgm, dubbing, cloud_files, order_api 等 | 快速查询类 |
+| 60-120s | status, task_consum_calc_points, movie_search | 中等耗时查询 |
+| 300s | script, clip, video, viral_learn, pre_upload, upload_task, original_script, original_clip | 长耗时任务 |
+
 ### 新增 API 端点检查清单
 
 添加新 API 时必须同时修改 **3 个文件**：
 1. `src/api/tasks.ts` — 函数 + Token
 2. `vite.config.js` — 开发代理
-3. `nginx.conf` — 生产代理
+3. `nginx.conf` — 生产代理（注意选择合适的超时档位）
 
 ---
 
@@ -263,18 +279,25 @@ original_script → original_clip → video → 完成
 # 安装依赖
 npm install
 
-# 本地开发 (端口 3100)
+# 本地开发 (端口 3100, host: 0.0.0.0)
 npm run dev
 
 # TypeScript 检查
 npx tsc --noEmit
 
-# 构建
+# 构建 (tsc && vite build → dist/)
 npm run build
 
 # 部署到 Fly.io
 fly deploy
 ```
+
+### Fly.io 部署配置
+
+- VM: `shared-cpu-2x`，1 CPU / 2048MB 内存
+- 容器内部端口: 8080（Nginx）
+- 自动休眠: 空闲 300s 后停机，请求时自动唤醒（min_machines_running: 0）
+- 健康检查: GET `/`，间隔 30s
 
 ### 开发规约
 

@@ -6,7 +6,7 @@ import { fetchMovies } from './api/movies';
 import { fetchTemplates } from './api/templates';
 import { fetchBGMList } from './api/bgm';
 import { fetchDubbingList } from './api/dubbing';
-import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete, preUpload, uploadTask, fetchTransferList, deleteFile, updatePreFile, fetchUserBalance, fetchCloudDriveUsage, estimatePoints, taskConsumCalcPoints, fetchFileDownloadUrl, generateOriginalScript, generateOriginalClip, searchMovies } from './api/tasks';
+import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete, preUpload, uploadTask, fetchTransferList, deleteFile, updatePreFile, fetchUserBalance, fetchCloudDriveUsage, estimatePoints, taskConsumCalcPoints, fetchFileDownloadUrl, generateOriginalScript, generateOriginalClip, searchMovies, getPresignedUploadUrl } from './api/tasks';
 import {
   IOrder, ITask, TaskType, OrderStatus, DeliveryMode,
   getCurrentUser, setCurrentUser, logout,
@@ -175,6 +175,13 @@ function LoadApp() {
   const [transferListPage, setTransferListPage] = useState(1);
   const transferPollingRef = useRef<NodeJS.Timeout | null>(null);
   const [updatingRelationFileId, setUpdatingRelationFileId] = useState<string | null>(null);
+
+  // 本地文件上传相关状态
+  const [uploadMode, setUploadMode] = useState<'link' | 'local'>('link');
+  const [localFile, setLocalFile] = useState<File | null>(null);
+  const [localUploadProgress, setLocalUploadProgress] = useState(0);
+  const [localUploading, setLocalUploading] = useState(false);
+  const localUploadXhrRef = useRef<XMLHttpRequest | null>(null);
 
   // 我的云盘相关状态
   const [cloudDriveFiles, setCloudDriveFiles] = useState<ICloudFile[]>([]);
@@ -1822,6 +1829,10 @@ function LoadApp() {
     setUploadTag('');
     setUploadTypeTag('电影');
     setUploadStep('input');
+    setUploadMode('link');
+    setLocalFile(null);
+    setLocalUploadProgress(0);
+    setLocalUploading(false);
     setPreUploadResult(null);
     setPreUploadUploadId('');
     setUploadModalVisible(true);
@@ -1851,6 +1862,74 @@ function LoadApp() {
     } finally {
       setPreUploadLoading(false);
     }
+  };
+
+  // 本地文件上传：获取预签名URL并直传OSS
+  const handleLocalFileUpload = async () => {
+    if (!localFile) { message.error('请选择文件'); return; }
+    setLocalUploading(true);
+    setLocalUploadProgress(0);
+    try {
+      // 1. 获取预签名上传URL
+      const presignedRes = await getPresignedUploadUrl({
+        app_key: appKey,
+        file_name: localFile.name,
+        file_size: localFile.size,
+        content_type: localFile.type || 'application/octet-stream'
+      });
+      const uploadUrl = presignedRes.upload_url;
+      if (!uploadUrl) {
+        message.error('获取上传地址失败');
+        setLocalUploading(false);
+        return;
+      }
+      // 2. 通过XHR直传文件到OSS
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        localUploadXhrRef.current = xhr;
+        xhr.open('PUT', uploadUrl, true);
+        xhr.setRequestHeader('Content-Type', localFile!.type || 'application/octet-stream');
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            setLocalUploadProgress(Math.round((e.loaded / e.total) * 100));
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            reject(new Error(`上传失败，HTTP ${xhr.status}`));
+          }
+        };
+        xhr.onerror = () => reject(new Error('网络错误，上传失败'));
+        xhr.onabort = () => reject(new Error('上传已取消'));
+        xhr.send(localFile);
+      });
+      message.success('文件上传成功');
+      setLocalFile(null);
+      setLocalUploadProgress(0);
+      // 上传完成后跳转到云盘页面并刷新
+      setUploadStep('cloud_drive');
+      loadCloudDriveFiles(1, '');
+      fetchCloudDriveUsage(appKey).then(res => setCloudDriveUsage(res)).catch(() => {});
+    } catch (error: any) {
+      if (error.message !== '上传已取消') {
+        message.error(error.message || '上传失败');
+      }
+    } finally {
+      setLocalUploading(false);
+      localUploadXhrRef.current = null;
+    }
+  };
+
+  // 取消本地文件上传
+  const cancelLocalUpload = () => {
+    if (localUploadXhrRef.current) {
+      localUploadXhrRef.current.abort();
+      localUploadXhrRef.current = null;
+    }
+    setLocalUploading(false);
+    setLocalUploadProgress(0);
   };
 
   // 上传文件：确认转存
@@ -2115,7 +2194,7 @@ function LoadApp() {
                   allowClear
                   style={{ flex: 1 }}
                 />
-                <Button type="primary" className="btn-primary-gradient" onClick={() => { setUploadLink(''); setUploadTag(''); setUploadTypeTag('电影'); setUploadStep('input'); setPreUploadResult(null); setPreUploadUploadId(''); }}>
+                <Button type="primary" className="btn-primary-gradient" onClick={() => { setUploadLink(''); setUploadTag(''); setUploadTypeTag('电影'); setUploadStep('input'); setUploadMode('link'); setLocalFile(null); setLocalUploadProgress(0); setLocalUploading(false); setPreUploadResult(null); setPreUploadUploadId(''); }}>
                   📤 上传文件
                 </Button>
               </div>
@@ -2207,28 +2286,121 @@ function LoadApp() {
 
           {uploadStep === 'input' && (
             <div className="upload-modal-body">
-              <div className="form-group">
-                <label className="form-label">资源链接 <span style={{ color: '#ff4d4f' }}>*</span></label>
-                <Input placeholder="百度网盘分享链接或资源直链URL" value={uploadLink} onChange={(e) => setUploadLink(e.target.value)} />
+              {/* Tab 切换 */}
+              <div className="upload-mode-tabs">
+                <div className={`upload-mode-tab ${uploadMode === 'link' ? 'active' : ''}`} onClick={() => { if (!localUploading) setUploadMode('link'); }}>
+                  🔗 链接转存
+                </div>
+                <div className={`upload-mode-tab ${uploadMode === 'local' ? 'active' : ''}`} onClick={() => { if (!localUploading) setUploadMode('local'); }}>
+                  📁 本地上传
+                </div>
               </div>
-              <div className="form-group">
-                <label className="form-label">转存任务名 <span style={{ color: '#ff4d4f' }}>*</span></label>
-                <Input placeholder="例如：电影名称" value={uploadTag} onChange={(e) => setUploadTag(e.target.value)} />
-              </div>
-              <div className="form-group">
-                <label className="form-label">业务类型 <span style={{ color: '#ff4d4f' }}>*</span></label>
-                <Select value={uploadTypeTag} onChange={(v) => setUploadTypeTag(v)} style={{ width: '100%' }}>
-                  <Select.Option value="电影">电影</Select.Option>
-                  <Select.Option value="短剧">短剧</Select.Option>
-                  <Select.Option value="图片">图片</Select.Option>
-                </Select>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <Button style={{ flex: 1 }} onClick={() => { setUploadStep('cloud_drive'); loadCloudDriveFiles(1, ''); }}>返回云盘</Button>
-                <Button type="primary" className="btn-primary-gradient" style={{ flex: 1 }} loading={preUploadLoading} onClick={handlePreUpload}>
-                  解析文件
-                </Button>
-              </div>
+
+              {/* 链接转存模式 */}
+              {uploadMode === 'link' && (
+                <>
+                  <div className="form-group">
+                    <label className="form-label">资源链接 <span style={{ color: '#ff4d4f' }}>*</span></label>
+                    <Input placeholder="百度网盘分享链接或资源直链URL" value={uploadLink} onChange={(e) => setUploadLink(e.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">转存任务名 <span style={{ color: '#ff4d4f' }}>*</span></label>
+                    <Input placeholder="例如：电影名称" value={uploadTag} onChange={(e) => setUploadTag(e.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">业务类型 <span style={{ color: '#ff4d4f' }}>*</span></label>
+                    <Select value={uploadTypeTag} onChange={(v) => setUploadTypeTag(v)} style={{ width: '100%' }}>
+                      <Select.Option value="电影">电影</Select.Option>
+                      <Select.Option value="短剧">短剧</Select.Option>
+                      <Select.Option value="图片">图片</Select.Option>
+                    </Select>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <Button style={{ flex: 1 }} onClick={() => { setUploadStep('cloud_drive'); loadCloudDriveFiles(1, ''); }}>返回云盘</Button>
+                    <Button type="primary" className="btn-primary-gradient" style={{ flex: 1 }} loading={preUploadLoading} onClick={handlePreUpload}>
+                      解析文件
+                    </Button>
+                  </div>
+                </>
+              )}
+
+              {/* 本地上传模式 */}
+              {uploadMode === 'local' && (
+                <>
+                  <div
+                    className={`local-upload-dropzone ${localFile ? 'has-file' : ''}`}
+                    onClick={() => { if (!localUploading) document.getElementById('local-file-input')?.click(); }}
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.add('dragover'); }}
+                    onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.remove('dragover'); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.currentTarget.classList.remove('dragover');
+                      if (!localUploading && e.dataTransfer.files.length > 0) {
+                        setLocalFile(e.dataTransfer.files[0]);
+                      }
+                    }}
+                  >
+                    <input
+                      id="local-file-input"
+                      type="file"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files.length > 0) {
+                          setLocalFile(e.target.files[0]);
+                          e.target.value = '';
+                        }
+                      }}
+                    />
+                    {localFile ? (
+                      <div className="local-upload-file-info">
+                        <div className="local-upload-file-icon">📄</div>
+                        <div className="local-upload-file-detail">
+                          <div className="local-upload-file-name" title={localFile.name}>{localFile.name}</div>
+                          <div className="local-upload-file-size">
+                            {localFile.size >= 1024 * 1024 * 1024
+                              ? (localFile.size / 1024 / 1024 / 1024).toFixed(2) + ' GB'
+                              : localFile.size >= 1024 * 1024
+                                ? (localFile.size / 1024 / 1024).toFixed(1) + ' MB'
+                                : (localFile.size / 1024).toFixed(0) + ' KB'
+                            }
+                          </div>
+                        </div>
+                        {!localUploading && (
+                          <Button size="small" type="text" danger onClick={(e) => { e.stopPropagation(); setLocalFile(null); }}>
+                            移除
+                          </Button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="local-upload-placeholder">
+                        <div style={{ fontSize: 36, marginBottom: 8 }}>📤</div>
+                        <div>点击或拖拽文件到此处上传</div>
+                        <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>支持任意文件类型</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 上传进度 */}
+                  {localUploading && (
+                    <div className="local-upload-progress-wrapper">
+                      <div className="local-upload-progress-bar">
+                        <div className="local-upload-progress-fill" style={{ width: `${localUploadProgress}%` }} />
+                      </div>
+                      <span className="local-upload-progress-text">{localUploadProgress}%</span>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <Button style={{ flex: 1 }} onClick={() => { if (localUploading) { cancelLocalUpload(); } else { setUploadStep('cloud_drive'); loadCloudDriveFiles(1, ''); } }}>
+                      {localUploading ? '取消上传' : '返回云盘'}
+                    </Button>
+                    <Button type="primary" className="btn-primary-gradient" style={{ flex: 1 }} loading={localUploading} disabled={!localFile} onClick={handleLocalFileUpload}>
+                      {localUploading ? '上传中...' : '开始上传'}
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           )}
 

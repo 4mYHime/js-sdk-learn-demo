@@ -276,6 +276,34 @@ export interface IDeleteFileResponse {
   error_message: string;
 }
 
+// 预签名上传请求
+export interface IPresignedUploadRequest {
+  app_key: string;
+  file_name: string;
+  file_size: number;
+  content_type: string;
+}
+
+// 预签名上传响应
+export interface IPresignedUploadResponse {
+  upload_url: string;
+  file_id: string;
+  object_key: string;
+  expires_in: number;
+  response_data: {
+    code: number;
+    message: string;
+    data: {
+      file_name: string;
+      file_id: string;
+      object_key: string;
+      upload_url: string;
+      expires_in: number;
+      upload_directory: string;
+    };
+  };
+}
+
 // 预转存文件更新请求
 export interface IUpdatePreFileRequest {
   app_key: string;

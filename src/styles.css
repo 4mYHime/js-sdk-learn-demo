@@ -1319,3 +1319,128 @@ body {
 .estimate-btn-confirm:active {
   transform: translateY(0);
 }
+
+/* ========== 上传模式 Tab 切换 ========== */
+.upload-mode-tabs {
+  display: flex;
+  border-radius: 8px;
+  background: #f0f0f0;
+  padding: 3px;
+  margin-bottom: 16px;
+}
+
+.upload-mode-tab {
+  flex: 1;
+  text-align: center;
+  padding: 8px 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #666;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  user-select: none;
+}
+
+.upload-mode-tab:hover {
+  color: #333;
+}
+
+.upload-mode-tab.active {
+  background: #fff;
+  color: #667eea;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* ========== 本地上传拖拽区 ========== */
+.local-upload-dropzone {
+  border: 2px dashed #d9d9d9;
+  border-radius: 10px;
+  padding: 32px 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  background: #fafafa;
+  margin-bottom: 16px;
+}
+
+.local-upload-dropzone:hover,
+.local-upload-dropzone.dragover {
+  border-color: #667eea;
+  background: rgba(102, 126, 234, 0.04);
+}
+
+.local-upload-dropzone.has-file {
+  border-style: solid;
+  border-color: #667eea;
+  background: rgba(102, 126, 234, 0.03);
+  padding: 16px;
+}
+
+.local-upload-placeholder {
+  color: #666;
+  font-size: 14px;
+}
+
+.local-upload-file-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.local-upload-file-icon {
+  font-size: 32px;
+  flex-shrink: 0;
+}
+
+.local-upload-file-detail {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.local-upload-file-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.local-upload-file-size {
+  font-size: 12px;
+  color: #999;
+  margin-top: 2px;
+}
+
+/* ========== 上传进度条 ========== */
+.local-upload-progress-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.local-upload-progress-bar {
+  flex: 1;
+  height: 8px;
+  background: #f0f0f0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.local-upload-progress-fill {
+  height: 100%;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.local-upload-progress-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #667eea;
+  min-width: 36px;
+  text-align: right;
+}
