@@ -374,6 +374,57 @@ export interface IOriginalClipRequest {
   };
 }
 
+// 单任务点数计算请求
+export interface ITaskConsumCalcRequest {
+  app_key: string;
+  request_params: {
+    popular_learning_params?: {
+      video_srt_path: string;
+      model_version?: string;
+      video_path?: string;
+      narrator_type?: string;
+    };
+    generate_writing_params?: {
+      learning_model_id?: string;
+      learning_srt?: string;
+      episodes_data: IEpisodeData[];
+      task_count?: number;
+      model_version?: string;
+      narrator_type?: string;
+      refine_srt_gaps?: string;
+    };
+    generate_clip_data_params?: {
+      order_num?: string;
+      generate_task_id?: string;
+    };
+    video_composing_params?: {
+      order_num?: string;
+      generate_task_id?: string;
+    };
+    fast_generate_writing_params?: {
+      learning_srt: string;
+      learning_model_id: string;
+      model: string;
+    };
+    fast_generate_writing_clip_data_params?: {
+      task_id: string;
+    };
+  };
+}
+
+// 单任务点数计算响应
+export interface ITaskConsumCalcResponse {
+  popular_learning_points: number | null;
+  generate_writing_points: number | null;
+  generate_clip_data_points: number | null;
+  video_composing_points: number | null;
+  visual_template_points: number | null;
+  fast_generate_writing_points: number | null;
+  fast_generate_writing_clip_data_points: number | null;
+  total_consume_points: number;
+  template_points: number | null;
+}
+
 // 预估点数请求
 export interface IEstimatePointsRequest {
   app_key: string;

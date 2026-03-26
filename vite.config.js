@@ -133,6 +133,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/original_clip/, ''),
       },
+      '/api/task_consum_calc_points': {
+        target: 'https://p3bvh2ss7f.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/task_consum_calc_points/, ''),
+      },
     },
   }
 })

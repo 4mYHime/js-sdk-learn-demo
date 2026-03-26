@@ -1,12 +1,12 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Steps, Button, Card, List, Avatar, Alert, Select, Input, Spin, Result, Tag, Empty, Radio, message, Tooltip, Modal } from 'antd';
-import { IMovie, INarratorTemplate, IBGM, IDubbing, IEpisodeData, ICloudFile, IPreUploadFile, IPreUploadResponse, IEstimatePointsResponse, IMovieSearchResult } from './types';
+import { IMovie, INarratorTemplate, IBGM, IDubbing, IEpisodeData, ICloudFile, IPreUploadFile, IPreUploadResponse, IEstimatePointsResponse, ITaskConsumCalcResponse, IMovieSearchResult } from './types';
 import { fetchMovies } from './api/movies';
 import { fetchTemplates } from './api/templates';
 import { fetchBGMList } from './api/bgm';
 import { fetchDubbingList } from './api/dubbing';
-import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete, preUpload, uploadTask, fetchTransferList, deleteFile, updatePreFile, fetchUserBalance, fetchCloudDriveUsage, estimatePoints, fetchFileDownloadUrl, generateOriginalScript, generateOriginalClip, searchMovies } from './api/tasks';
+import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete, preUpload, uploadTask, fetchTransferList, deleteFile, updatePreFile, fetchUserBalance, fetchCloudDriveUsage, estimatePoints, taskConsumCalcPoints, fetchFileDownloadUrl, generateOriginalScript, generateOriginalClip, searchMovies } from './api/tasks';
 import {
   IOrder, ITask, TaskType, OrderStatus, DeliveryMode,
   getCurrentUser, setCurrentUser, logout,
@@ -192,6 +192,7 @@ function LoadApp() {
   // 预估点数弹窗
   const [estimateModalVisible, setEstimateModalVisible] = useState(false);
   const [estimateResult, setEstimateResult] = useState<IEstimatePointsResponse | null>(null);
+  const [taskCalcResult, setTaskCalcResult] = useState<ITaskConsumCalcResponse | null>(null);
   const [estimateLoading, setEstimateLoading] = useState(false);
   const [estimateError, setEstimateError] = useState('');
   const [pendingConfirmInfo, setPendingConfirmInfo] = useState<{ orderId: string; taskType: string } | null>(null);
@@ -940,7 +941,7 @@ function LoadApp() {
     resumeOrderWorkflow(orderId);
   };
 
-  // 预估下一个任务点数后再确认（分段式交付）
+  // 预估下一个任务点数后再确认（分段式交付，调用 task_consum_calc_points 接口）
   const handleEstimateForConfirm = async (orderId: string, taskType: string) => {
     const order = getOrder(orderId);
     if (!order) return;
@@ -949,38 +950,57 @@ function LoadApp() {
     setEstimateLoading(true);
     setEstimateError('');
     setEstimateResult(null);
+    setTaskCalcResult(null);
     setEstimateModalVisible(true);
 
-    const episodesData = order.episodesData?.length > 0
-      ? order.episodesData
-      : [{
-          num: 1,
-          srt_oss_key: order.videoSrtPath,
-          video_oss_key: order.videoPath || order.videoSrtPath,
-          negative_oss_key: order.videoPath || order.videoSrtPath
-        }];
-
+    const completedTask = order.tasks.find(t => t.type === taskType);
     const isOriginal = order.copywritingType === 'original';
-    const isCustomTpl = order.templateSource === 'generate';
 
-    const requestParams: any = {
-      episodes_data: episodesData,
-      model_version: order.modelVersion || 'standard',
-      narrator_type: order.narratorType || 'movie',
-      ...(isOriginal ? { text_model: order.originalModel } : {}),
-      ...(order.learningModelId
-        ? { learning_model_id: order.learningModelId }
-        : isCustomTpl && order.viralSrtPath
-          ? { learning_srt: order.viralSrtPath }
-          : { learning_model_id: order.templateId })
-    };
+    // 根据当前完成的任务类型，构建下一步任务的预估参数
+    const requestParams: any = {};
+
+    if (taskType === 'viral_learn') {
+      // 爆款模型完成 → 下一步是生成文案（generate_writing）
+      const learningModelId = completedTask?.result?.api_response?.data?.results?.order_info?.learning_model_id || order.learningModelId || order.templateId;
+      const episodesData = order.episodesData?.length > 0
+        ? order.episodesData
+        : [{ num: 1, srt_oss_key: order.videoSrtPath, video_oss_key: order.videoPath || order.videoSrtPath, negative_oss_key: order.videoPath || order.videoSrtPath }];
+      requestParams.generate_writing_params = {
+        learning_model_id: learningModelId,
+        learning_srt: order.viralSrtPath || order.videoSrtPath,
+        episodes_data: episodesData,
+        task_count: 1,
+        model_version: order.modelVersion || 'standard',
+        narrator_type: order.narratorType || 'movie'
+      };
+    } else if (taskType === 'script') {
+      // 文案完成 → 下一步是生成剪辑脚本（generate_clip_data）
+      requestParams.generate_clip_data_params = {
+        order_num: completedTask?.orderNum || ''
+      };
+    } else if (taskType === 'clip') {
+      // 剪辑完成 → 下一步是合成视频（video_composing）
+      requestParams.video_composing_params = {
+        order_num: completedTask?.orderNum || ''
+      };
+    } else if (taskType === 'original_script') {
+      // 原创文案完成 → 下一步是原创剪辑（fast_generate_writing_clip_data）
+      requestParams.fast_generate_writing_clip_data_params = {
+        task_id: completedTask?.taskId || ''
+      };
+    } else if (taskType === 'original_clip') {
+      // 原创剪辑完成 → 下一步是合成视频（video_composing）
+      requestParams.video_composing_params = {
+        order_num: completedTask?.orderNum || ''
+      };
+    }
 
     try {
-      const result = await estimatePoints({
+      const result = await taskConsumCalcPoints({
         app_key: order.appKey,
         request_params: requestParams
       });
-      setEstimateResult(result);
+      setTaskCalcResult(result);
     } catch (err: any) {
       setEstimateError(err?.message || '预估点数失败，请重试');
     } finally {
@@ -1427,6 +1447,7 @@ function LoadApp() {
   // 预估点数：点击"开始生成视频"时先调用
   const handleEstimatePoints = async () => {
     setPendingConfirmInfo(null);
+    setTaskCalcResult(null);
     const _isOriginal = copywritingType === 'original';
     if (!selectedMovie || !selectedBGM || !selectedDubbing || !selectedTemplate) {
       setErrorMessage('请完成所有配置');
@@ -1956,7 +1977,7 @@ function LoadApp() {
           <div className="estimate-header">
             <div className="estimate-header-icon">💰</div>
             <div className="estimate-header-title">预估消耗点数</div>
-            <div className="estimate-header-subtitle">以下为当前任务预估消耗，实际消耗以执行结果为准</div>
+            <div className="estimate-header-subtitle">{pendingConfirmInfo ? '以下为当前任务预估消耗，实际消耗以执行结果为准' : '以下为本次订单所有阶段预估消耗，实际消耗以执行结果为准'}</div>
           </div>
 
           {estimateLoading && (
@@ -1976,51 +1997,71 @@ function LoadApp() {
             </div>
           )}
 
-          {estimateResult && !estimateLoading && !estimateError && (
+          {(estimateResult || taskCalcResult) && !estimateLoading && !estimateError && (
             <>
               {(() => {
-                let taskLabel = '';
-                let taskIcon = '';
-                let taskPoints = 0;
-
-                if (pendingConfirmInfo) {
-                  // 确认任务场景：根据当前完成的任务类型推断下一个任务
+                if (pendingConfirmInfo && taskCalcResult) {
+                  // 确认任务场景：只展示下一步任务的预估点数
+                  let taskLabel = ''; let taskIcon = ''; let taskPoints = 0;
                   const t = pendingConfirmInfo.taskType;
                   if (t === 'viral_learn') {
-                    taskLabel = '解说文案'; taskIcon = '📝'; taskPoints = estimateResult.commentary_generation_points ?? 0;
+                    taskLabel = '解说文案'; taskIcon = '📝'; taskPoints = taskCalcResult.generate_writing_points ?? 0;
                   } else if (t === 'script') {
-                    taskLabel = '剪辑脚本'; taskIcon = '✂️'; taskPoints = estimateResult.video_synthesis_points ?? 0;
+                    taskLabel = '生成剪辑脚本'; taskIcon = '✂️'; taskPoints = taskCalcResult.generate_clip_data_points ?? 0;
                   } else if (t === 'clip') {
-                    taskLabel = '视频合成'; taskIcon = '🎬'; taskPoints = estimateResult.video_synthesis_points ?? 0;
+                    taskLabel = '合成视频'; taskIcon = '🎬'; taskPoints = taskCalcResult.video_composing_points ?? 0;
                   } else if (t === 'original_script') {
-                    taskLabel = '原创剪辑'; taskIcon = '✂️'; taskPoints = estimateResult.video_synthesis_points ?? 0;
+                    taskLabel = '原创剪辑'; taskIcon = '✂️'; taskPoints = taskCalcResult.fast_generate_writing_clip_data_points ?? 0;
                   } else if (t === 'original_clip') {
-                    taskLabel = '视频合成'; taskIcon = '🎬'; taskPoints = estimateResult.video_synthesis_points ?? 0;
+                    taskLabel = '合成视频'; taskIcon = '🎬'; taskPoints = taskCalcResult.video_composing_points ?? 0;
                   }
-                } else {
-                  // 创建订单场景：根据文案类型和模板类型决定第一个任务
-                  const isCustomTpl = selectedTemplate?.name === '自定义';
-                  if (copywritingType === 'original') {
-                    taskLabel = '原创文案'; taskIcon = '📄'; taskPoints = estimateResult.text_model_points ?? 0;
-                  } else if (isCustomTpl) {
-                    taskLabel = '爆款模型学习'; taskIcon = '🧠'; taskPoints = estimateResult.viral_learning_points ?? 0;
-                  } else {
-                    taskLabel = '解说文案'; taskIcon = '📝'; taskPoints = estimateResult.commentary_generation_points ?? 0;
-                  }
+                  return (
+                    <>
+                      <div className="estimate-detail-list">
+                        <div className="estimate-detail-row">
+                          <span className="estimate-detail-label"><span className="estimate-icon">{taskIcon}</span>{taskLabel}</span>
+                          <span className="estimate-detail-value">{taskPoints}<small> 点</small></span>
+                        </div>
+                      </div>
+                      <div className="estimate-total-row">
+                        <span className="estimate-total-label">本次消耗</span>
+                        <span className="estimate-total-value">{taskPoints}<small> 点</small></span>
+                      </div>
+                    </>
+                  );
                 }
+
+                if (!estimateResult) return null;
+
+                // 创建订单场景：展示所有阶段点数明细
+                const allStages: { icon: string; label: string; points: number }[] = [];
+                const isCustomTpl = selectedTemplate?.name === '自定义';
+
+                if (copywritingType === 'original') {
+                  if ((estimateResult.text_model_points ?? 0) > 0)
+                    allStages.push({ icon: '📄', label: '原创文案', points: estimateResult.text_model_points! });
+                } else {
+                  if (isCustomTpl && (estimateResult.viral_learning_points ?? 0) > 0)
+                    allStages.push({ icon: '🧠', label: '爆款模型学习', points: estimateResult.viral_learning_points! });
+                  if ((estimateResult.commentary_generation_points ?? 0) > 0)
+                    allStages.push({ icon: '📝', label: '解说文案', points: estimateResult.commentary_generation_points! });
+                }
+                if ((estimateResult.video_synthesis_points ?? 0) > 0)
+                  allStages.push({ icon: '✂️', label: '合成视频', points: estimateResult.video_synthesis_points! });
 
                 return (
                   <>
                     <div className="estimate-detail-list">
-                      <div className="estimate-detail-row">
-                        <span className="estimate-detail-label"><span className="estimate-icon">{taskIcon}</span>{taskLabel}</span>
-                        <span className="estimate-detail-value">{taskPoints}<small> 点</small></span>
-                      </div>
+                      {allStages.map((stage, i) => (
+                        <div className="estimate-detail-row" key={i}>
+                          <span className="estimate-detail-label"><span className="estimate-icon">{stage.icon}</span>{stage.label}</span>
+                          <span className="estimate-detail-value">{stage.points}<small> 点</small></span>
+                        </div>
+                      ))}
                     </div>
-
                     <div className="estimate-total-row">
-                      <span className="estimate-total-label">本次消耗</span>
-                      <span className="estimate-total-value">{taskPoints}<small> 点</small></span>
+                      <span className="estimate-total-label">预估总消耗</span>
+                      <span className="estimate-total-value">{copywritingType === 'original' ? ((estimateResult.text_model_points ?? 0) + (estimateResult.video_synthesis_points ?? 0)) : estimateResult.total_consume_points}<small> 点</small></span>
                     </div>
                   </>
                 );
@@ -2407,9 +2448,9 @@ function LoadApp() {
                       setMovieListExpanded(true);
                       setEpisodePairs([]);
                     }
-                  } else if (val === 'original_冷门新剧') {
+                  } else if (val === 'original_冷门/新剧') {
                     setCopywritingType('original');
-                    setOriginalMode('冷门新剧');
+                    setOriginalMode('冷门/新剧');
                     if (narratorType !== 'short_drama') {
                       setNarratorType('short_drama');
                       setSelectedMovie(null);
@@ -2428,7 +2469,7 @@ function LoadApp() {
                 <Radio.Button value="secondary" style={{ textAlign: 'center', borderRadius: 8 }}>二创文案</Radio.Button>
                 <Radio.Button value="original_热门影视" style={{ textAlign: 'center', borderRadius: 8 }}>原创·纯解说</Radio.Button>
                 <Radio.Button value="original_原声混剪" style={{ textAlign: 'center', borderRadius: 8 }}>原创·原声混剪</Radio.Button>
-                <Radio.Button value="original_冷门新剧" style={{ textAlign: 'center', borderRadius: 8 }}>原创·冷门新剧</Radio.Button>
+                <Radio.Button value="original_冷门/新剧" style={{ textAlign: 'center', borderRadius: 8 }}>原创·冷门新剧</Radio.Button>
               </Radio.Group>
             </div>
 
@@ -2436,7 +2477,7 @@ function LoadApp() {
               <div style={{ flex: 1 }}>
                 <label className="form-label">解说类型</label>
                 <Select style={{ width: '100%' }} value={narratorType}
-                  disabled={originalMode === '冷门新剧' && copywritingType === 'original'}
+                  disabled={originalMode === '冷门/新剧' && copywritingType === 'original'}
                   onChange={(v: string) => {
                     setNarratorType(v);
                     setSelectedTemplate(null);
@@ -2449,7 +2490,7 @@ function LoadApp() {
                     setEpisodePairs([]);
                   }}
                   options={
-                    copywritingType === 'original' && originalMode === '冷门新剧'
+                    copywritingType === 'original' && originalMode === '冷门/新剧'
                       ? [{ label: '短剧', value: 'short_drama' }]
                       : copywritingType === 'original'
                         ? [
@@ -2550,7 +2591,7 @@ function LoadApp() {
                     style={{ marginBottom: copywritingType === 'original' ? 8 : 0 }}
                   />
                   {copywritingType === 'original' && !confirmedMovieJson && (() => {
-                    const isOptional = originalMode === '冷门新剧';
+                    const isOptional = originalMode === '冷门/新剧';
                     return (
                       <div>
                         <Button
@@ -3558,7 +3599,7 @@ function LoadApp() {
                   )}
                   {copywritingType === 'original' && (
                     <>
-                      <p><strong>文案类型:</strong> 原创文案 ({originalMode === '原声混剪' ? '原声混剪' : originalMode === '冷门新剧' ? '冷门新剧' : '纯解说'})</p>
+                      <p><strong>文案类型:</strong> 原创文案 ({originalMode === '原声混剪' ? '原声混剪' : originalMode === '冷门/新剧' ? '冷门/新剧' : '纯解说'})</p>
                       <p className="hint">文案语言: {originalLanguage} | 文案模型: {originalModel === 'flash' ? '极速版' : '旗舰版'}</p>
                       {confirmedMovieJson && <p className="hint">电影信息: {confirmedMovieJson.local_title} ({confirmedMovieJson.year})</p>}
                     </>
@@ -3639,9 +3680,9 @@ function LoadApp() {
         if (!selectedMovie) return false;
         if (!isCustomMovie) return true;
         if (!customMovieName.trim()) return false;
-        // 原创模式电影搜索必填校验（仅冷门新剧可选，其余原创必填）
+        // 原创模式电影搜索必填校验（仅冷门/新剧可选，其余原创必填）
         if (copywritingType === 'original' && isCustomMovie) {
-          const searchOptional = originalMode === '冷门新剧';
+          const searchOptional = originalMode === '冷门/新剧';
           if (!searchOptional && !confirmedMovieJson) return false;
         }
         if (isShortDrama) return episodePairs.length > 0;
