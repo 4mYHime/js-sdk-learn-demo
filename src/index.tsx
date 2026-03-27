@@ -6,7 +6,7 @@ import { fetchMovies } from './api/movies';
 import { fetchTemplates } from './api/templates';
 import { fetchBGMList } from './api/bgm';
 import { fetchDubbingList } from './api/dubbing';
-import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete, preUpload, uploadTask, fetchTransferList, deleteFile, updatePreFile, fetchUserBalance, fetchCloudDriveUsage, estimatePoints, taskConsumCalcPoints, fetchFileDownloadUrl, generateOriginalScript, generateOriginalClip, searchMovies, getPresignedUploadUrl } from './api/tasks';
+import { generateScript, generateClip, synthesizeVideo, generateViralModel, fetchCloudFiles, fetchCloudFilesDirect, pollTaskUntilComplete, preUpload, uploadTask, fetchTransferList, deleteFile, updatePreFile, fetchUserBalance, fetchCloudDriveUsage, estimatePoints, taskConsumCalcPoints, fetchFileDownloadUrl, generateOriginalScript, generateOriginalClip, searchMovies, getPresignedUploadUrl, reportUploadResult } from './api/tasks';
 import {
   IOrder, ITask, TaskType, OrderStatus, DeliveryMode,
   getCurrentUser, setCurrentUser, logout,
@@ -1982,6 +1982,7 @@ function LoadApp() {
     if (!localFile) { message.error('请选择文件'); return; }
     setLocalUploading(true);
     setLocalUploadProgress(0);
+    let reportContext: { file_id: string; object_key: string } | null = null;
     try {
       // 1. 获取预签名上传URL
       const presignedRes = await getPresignedUploadUrl({
@@ -1996,6 +1997,7 @@ function LoadApp() {
         setLocalUploading(false);
         return;
       }
+      reportContext = { file_id: presignedRes.file_id, object_key: presignedRes.object_key };
       // 2. 通过XHR直传文件到OSS
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -2018,6 +2020,8 @@ function LoadApp() {
         xhr.onabort = () => reject(new Error('上传已取消'));
         xhr.send(localFile);
       });
+      // 3. 汇报上传成功
+      reportUploadResult({ app_key: appKey, ...reportContext, upload_status: 'success', file_size: localFile.size, error_message: '' }).catch(() => {});
       message.success('文件上传成功');
       setLocalFile(null);
       setLocalUploadProgress(0);
@@ -2028,6 +2032,10 @@ function LoadApp() {
     } catch (error: any) {
       if (error.message !== '上传已取消') {
         message.error(error.message || '上传失败');
+        // 汇报上传失败（仅在已获取到 file_id 时）
+        if (reportContext) {
+          reportUploadResult({ app_key: appKey, ...reportContext, upload_status: 'failed', file_size: localFile!.size, error_message: error.message || '上传失败' }).catch(() => {});
+        }
       }
     } finally {
       setLocalUploading(false);

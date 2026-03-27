@@ -304,6 +304,26 @@ export interface IPresignedUploadResponse {
   };
 }
 
+// 上传结果汇报请求
+export interface IUploadReportRequest {
+  app_key: string;
+  file_id: string;
+  object_key: string;
+  upload_status: 'success' | 'failed';
+  file_size: number;
+  error_message: string;
+}
+
+// 上传结果汇报响应
+export interface IUploadReportResponse {
+  file_id: string;
+  object_key: string;
+  upload_status: string;
+  processed: boolean;
+  message: string;
+  run_id: string;
+}
+
 // 预转存文件更新请求
 export interface IUpdatePreFileRequest {
   app_key: string;

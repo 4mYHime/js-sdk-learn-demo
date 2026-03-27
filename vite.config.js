@@ -143,6 +143,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/presigned_upload/, ''),
       },
+      '/api/upload_report': {
+        target: 'https://xkskkgbpss.coze.site',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/upload_report/, ''),
+      },
     },
   }
 })
