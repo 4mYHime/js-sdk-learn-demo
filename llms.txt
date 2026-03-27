@@ -1,0 +1,32 @@
+# AI解说大师-Coze 工作流API（新版）
+
+## API Docs
+- coze编程工作流 > 模块 1：任务生命周期（TASK） [1. 创建爆款解说学习模型任务](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841556e0.md): 创建爆款解说学习模型任务
+- coze编程工作流 > 模块 1：任务生命周期（TASK） [2. 生成解说文案](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841557e0.md): 生成解说文案
+- coze编程工作流 > 模块 1：任务生命周期（TASK） [3. 生成剪辑数据](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841558e0.md): 生成剪辑数据
+- coze编程工作流 > 模块 1：任务生命周期（TASK） [4. 合成视频](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841559e0.md): 合成视频
+- coze编程工作流 > 模块 1：任务生命周期（TASK） [查询爆款解说任务状态](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841560e0.md): 查询爆款解说任务状态
+- coze编程工作流 > 模块 3：云盘文件管理（FILES） [[单个]预转存文件单个更新接口](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841561e0.md): [单个]预转存文件单个更新接口
+- coze编程工作流 > 模块 3：云盘文件管理（FILES） [用户传输列表](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841562e0.md): 用户传输列表
+- coze编程工作流 > 模块 3：云盘文件管理（FILES） [删除用户文件工作流](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841563e0.md): 删除用户文件
+- coze编程工作流 > 模块 3：云盘文件管理（FILES） [上传转存任务工作流](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841564e0.md): 上传转存任务
+- coze编程工作流 > 模块 3：云盘文件管理（FILES） [预转存接口](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841565e0.md): 预转存文件
+- coze编程工作流 > 模块 3：云盘文件管理（FILES） [获取文件下载链接工作流](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841566e0.md): 获取云盘文件下载链接
+- coze编程工作流 > 模块 3：云盘文件管理（FILES） [文件搜索工作流](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841567e0.md): 搜索用户云盘文件
+- coze编程工作流 > 模块 3：云盘文件管理（FILES） [文件列表工作流](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841568e0.md): 获取用户云盘文件列表
+- coze编程工作流 > 模块 4：视觉模板管理（TEMPLATE） [视觉模板调用工作流](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841569e0.md): 视觉模板调用
+- coze编程工作流 > 模块 4：视觉模板管理（TEMPLATE） [视频模版状态工作流](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841570e0.md): 获取视频模版状态
+- coze编程工作流 > 模块 4：视觉模板管理（TEMPLATE） [根据模板获取视觉模板工作流](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841571e0.md): 根据模板获取视觉模板
+- coze编程工作流 > 模块 4：视觉模板管理（TEMPLATE） [视觉模板标签工作流](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841572e0.md): 获取视觉模板标签
+- coze编程工作流 > 模块 5：文案管理（COPYWRITING） [保存已修改解说文案内容](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841573e0.md): 修改解说文案
+- coze编程工作流 > 模块 5：文案管理（COPYWRITING） [获取已生成解说文案内容](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841574e0.md): 获取解说文案内容
+- coze编程工作流 > 模块 6：配音/BGM（VOICE） [查询配音数据](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841575e0.md): 查询配音数据
+- coze编程工作流 > 模块 6：配音/BGM（VOICE） [查询BGM数据](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841576e0.md): 查询BGM数据
+- coze编程工作流 > 模块 7：爆款模板库（VIRAL） [查询素材数据](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841577e0.md): 查询素材数据
+- coze编程工作流 > 模块 7：爆款模板库（VIRAL） [查询爆款模板库](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841578e0.md): 查询爆款模板
+- coze编程工作流 > 模块 8：素材查询（MATERIAL） [获取 NarratorType](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841579e0.md): 获取 NarratorType
+- coze编程工作流 > 模块 8：素材查询（MATERIAL） [查询视频素材](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841580e0.md): 查询视频素材
+- coze编程工作流 > 模块 9：用户账户（ACCOUNT） [用户余额查询工作流](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841581e0.md): 用户余额查询
+- coze编程工作流 > 模块 10：数据管理（DATA） [coze应用，用户提交工单，发送工单消息到飞书机器人](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841582e0.md): coze应用，用户提交工单，发送工单消息到飞书机器人
+- coze编程工作流 > 模块 10：数据管理（DATA） [修改剪辑数据](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841583e0.md): 修改剪辑数据
+- coze编程工作流 > 模块 10：数据管理（DATA） [查询coze任务数据](https://s.apifox.cn/8a5dae21-136c-4b6c-bc58-39bcb5a83761/422841584e0.md): 查询coze任务数据
