@@ -252,13 +252,22 @@ export async function pollTaskUntilComplete(
       console.warn('任务状态异常，原始值:', status!.api_response?.data?.status, '完整响应:', JSON.stringify(status!).slice(0, 500));
     }
     
-    // 等待间隔，期间检查abort
+    // 等待间隔，支持：abort 中断、标签页切回前台立即唤醒（避免后台节流导致延迟）
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, intervalMs);
-      if (abortSignal?.aborted) {
+      let resolved = false;
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
         clearTimeout(timer);
+        document.removeEventListener('visibilitychange', onVisible);
         resolve();
-      }
+      };
+      const timer = setTimeout(done, intervalMs);
+      const onVisible = () => {
+        if (document.visibilityState === 'visible') done();
+      };
+      document.addEventListener('visibilitychange', onVisible);
+      if (abortSignal?.aborted) done();
     });
   }
 }

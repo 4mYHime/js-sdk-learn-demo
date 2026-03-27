@@ -182,6 +182,98 @@ function LoadApp() {
   const [localUploadProgress, setLocalUploadProgress] = useState(0);
   const [localUploading, setLocalUploading] = useState(false);
   const localUploadXhrRef = useRef<XMLHttpRequest | null>(null);
+  const [fileDisguiseWarning, setFileDisguiseWarning] = useState<string | null>(null);
+  const [fileFormatError, setFileFormatError] = useState<string | null>(null);
+
+  // 允许上传的文件扩展名
+  const ALLOWED_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a', '.mp4', '.mkv', '.mov', '.srt', '.png', '.jpg', '.jpeg']);
+  const ALLOWED_ACCEPT = Array.from(ALLOWED_EXTENSIONS).join(',');
+
+  const checkFileExtension = (file: File): string | null => {
+    const ext = file.name.includes('.') ? ('.' + file.name.split('.').pop()!.toLowerCase()) : '';
+    if (!ext || !ALLOWED_EXTENSIONS.has(ext)) {
+      return `不支持的文件格式 ${ext || '(无扩展名)'}，仅支持：${Array.from(ALLOWED_EXTENSIONS).join('、')}`;
+    }
+    return null;
+  };
+
+  // 文件伪装检测：通过魔术字节判断文件真实格式，与扩展名比对
+  const detectFileDisguise = async (file: File): Promise<string | null> => {
+    // 魔术字节签名表：[偏移量, 字节序列, 真实格式名, 兼容扩展名列表]
+    const signatures: Array<{ offset: number; magic: number[]; format: string; extensions: string[] }> = [
+      // 视频
+      { offset: 4, magic: [0x66, 0x74, 0x79, 0x70], format: 'mp4/mov', extensions: ['mp4', 'mov', 'm4v', 'm4a', 'f4v', '3gp', '3g2'] },
+      { offset: 0, magic: [0x1A, 0x45, 0xDF, 0xA3], format: 'mkv/webm', extensions: ['mkv', 'webm'] },
+      { offset: 0, magic: [0x46, 0x4C, 0x56, 0x01], format: 'flv', extensions: ['flv'] },
+      { offset: 0, magic: [0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11], format: 'wmv/wma', extensions: ['wmv', 'wma', 'asf'] },
+      { offset: 0, magic: [0x00, 0x00, 0x01, 0xBA], format: 'mpeg', extensions: ['mpg', 'mpeg', 'vob'] },
+      { offset: 0, magic: [0x00, 0x00, 0x01, 0xB3], format: 'mpeg', extensions: ['mpg', 'mpeg'] },
+      // 音频
+      { offset: 0, magic: [0x49, 0x44, 0x33], format: 'mp3', extensions: ['mp3'] },
+      { offset: 0, magic: [0xFF, 0xFB], format: 'mp3', extensions: ['mp3'] },
+      { offset: 0, magic: [0xFF, 0xF3], format: 'mp3', extensions: ['mp3'] },
+      { offset: 0, magic: [0xFF, 0xF2], format: 'mp3', extensions: ['mp3'] },
+      { offset: 0, magic: [0x66, 0x4C, 0x61, 0x43], format: 'flac', extensions: ['flac'] },
+      { offset: 0, magic: [0x4F, 0x67, 0x67, 0x53], format: 'ogg', extensions: ['ogg', 'oga', 'ogv', 'opus'] },
+      // 图片
+      { offset: 0, magic: [0xFF, 0xD8, 0xFF], format: 'jpg', extensions: ['jpg', 'jpeg', 'jfif'] },
+      { offset: 0, magic: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], format: 'png', extensions: ['png'] },
+      { offset: 0, magic: [0x47, 0x49, 0x46, 0x38], format: 'gif', extensions: ['gif'] },
+      { offset: 0, magic: [0x42, 0x4D], format: 'bmp', extensions: ['bmp'] },
+      { offset: 0, magic: [0x49, 0x49, 0x2A, 0x00], format: 'tiff', extensions: ['tif', 'tiff'] },
+      { offset: 0, magic: [0x4D, 0x4D, 0x00, 0x2A], format: 'tiff', extensions: ['tif', 'tiff'] },
+      // 压缩包
+      { offset: 0, magic: [0x50, 0x4B, 0x03, 0x04], format: 'zip', extensions: ['zip', 'xlsx', 'docx', 'pptx', 'jar', 'apk'] },
+      { offset: 0, magic: [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07], format: 'rar', extensions: ['rar'] },
+      { offset: 0, magic: [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C], format: '7z', extensions: ['7z'] },
+      { offset: 0, magic: [0x1F, 0x8B], format: 'gzip', extensions: ['gz', 'tgz'] },
+      // 文档
+      { offset: 0, magic: [0x25, 0x50, 0x44, 0x46], format: 'pdf', extensions: ['pdf'] },
+    ];
+
+    // RIFF 容器需要特殊处理（AVI / WAV / WEBP 共用 RIFF 头）
+    const riffSubTypes: Array<{ offset: number; magic: number[]; format: string; extensions: string[] }> = [
+      { offset: 8, magic: [0x41, 0x56, 0x49, 0x20], format: 'avi', extensions: ['avi'] },
+      { offset: 8, magic: [0x57, 0x41, 0x56, 0x45], format: 'wav', extensions: ['wav'] },
+      { offset: 8, magic: [0x57, 0x45, 0x42, 0x50], format: 'webp', extensions: ['webp'] },
+    ];
+
+    const headerSize = 16;
+    const blob = file.slice(0, headerSize);
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+
+    const extMatch = file.name.match(/\.([^.]+)$/);
+    if (!extMatch) return null; // 无扩展名，不检测
+    const ext = extMatch[1].toLowerCase();
+
+    // 检查 RIFF 容器
+    const isRiff = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+    if (isRiff) {
+      for (const sub of riffSubTypes) {
+        const match = sub.magic.every((b, i) => bytes[sub.offset + i] === b);
+        if (match) {
+          if (sub.extensions.includes(ext)) return null;
+          return `${file.name} 文件伪装检测：后缀为 .${ext}，但实际文件格式为 ${sub.format}`;
+        }
+      }
+      // RIFF 但子类型未知，不报警
+      return null;
+    }
+
+    // 检查常规签名
+    for (const sig of signatures) {
+      if (sig.offset + sig.magic.length > bytes.length) continue;
+      const match = sig.magic.every((b, i) => bytes[sig.offset + i] === b);
+      if (match) {
+        if (sig.extensions.includes(ext)) return null;
+        return `${file.name} 文件伪装检测：后缀为 .${ext}，但实际文件格式为 ${sig.format}`;
+        }
+      }
+
+    // 未匹配任何已知签名，放行
+    return null;
+  };
 
   // 我的云盘相关状态
   const [cloudDriveFiles, setCloudDriveFiles] = useState<ICloudFile[]>([]);
@@ -530,10 +622,11 @@ function LoadApp() {
             },
             { abortSignal: signal, appKey: order.appKey }
           );
-          
-          if (signal.aborted) break;
-          
-          // 任务完成，从store获取最新task数据（保留轮询期间累积的pollCount和elapsedTime）
+
+          // 【Fix30】pollTaskUntilComplete 成功返回 = 任务确实已完成
+          // 无论 abort 状态如何，都必须先保存完成结果，避免竞态丢失
+          // 竞态场景：abort 在 queryTaskStatus 网络请求期间被设置，
+          // 请求返回 status=2 后函数正常 return，但旧代码在此处 break 导致结果丢失
           const latestTask = getOrder(orderId)?.tasks.find(t => t.taskId === runningTask.taskId) || runningTask;
           const orderNum = result.api_response?.data?.task_order_num || '';
           updateOrderTask(orderId, {
@@ -543,7 +636,21 @@ function LoadApp() {
             result: result,
             completedAt: Date.now()
           });
-          
+
+          // 【Fix31】任务完成后同步更新订单状态，反映当前实际进度
+          const nextStatusMap: Record<TaskType, OrderStatus> = {
+            viral_learn: 'script',
+            script: 'clip',
+            clip: 'video',
+            original_script: 'original_clip',
+            original_clip: 'video',
+            video: 'done'
+          };
+          const nextOrderStatus = nextStatusMap[runningTask.type];
+          if (nextOrderStatus) {
+            updateOrderStatus(orderId, nextOrderStatus, '');
+          }
+
           // 如果是video任务完成，提取URL标记订单完成
           if (runningTask.type === 'video') {
             const videoUrl = result.api_response?.data?.results?.tasks?.[0]?.video_url || '';
@@ -551,7 +658,7 @@ function LoadApp() {
             setCurrentOrder(getOrder(orderId));
             break;
           }
-          
+
           // 分段式交付：viral_learn/script/clip/original_script/original_clip 完成后暂停，等待用户确认
           if (order.deliveryMode === 'staged' && (runningTask.type === 'viral_learn' || runningTask.type === 'script' || runningTask.type === 'clip' || runningTask.type === 'original_script' || runningTask.type === 'original_clip')) {
             updateOrderTask(orderId, {
@@ -565,7 +672,13 @@ function LoadApp() {
             setCurrentOrder(getOrder(orderId));
             break;
           }
-          
+
+          // 完成结果已保存，再检查是否需要中断工作流
+          if (signal.aborted) {
+            setCurrentOrder(getOrder(orderId));
+            break;
+          }
+
           setCurrentOrder(getOrder(orderId));
           continue; // 回到循环顶部，处理下一步
         }
@@ -2337,7 +2450,15 @@ function LoadApp() {
                       e.stopPropagation();
                       e.currentTarget.classList.remove('dragover');
                       if (!localUploading && e.dataTransfer.files.length > 0) {
-                        setLocalFile(e.dataTransfer.files[0]);
+                        const f = e.dataTransfer.files[0];
+                        setLocalFile(f);
+                        setFileDisguiseWarning(null);
+                        setFileFormatError(null);
+                        const formatErr = checkFileExtension(f);
+                        setFileFormatError(formatErr);
+                        if (!formatErr) {
+                          detectFileDisguise(f).then(warning => setFileDisguiseWarning(warning));
+                        }
                       }
                     }}
                   >
@@ -2345,9 +2466,19 @@ function LoadApp() {
                       id="local-file-input"
                       type="file"
                       style={{ display: 'none' }}
-                      onChange={(e) => {
+                      accept={ALLOWED_ACCEPT}
+                      onChange={async (e) => {
                         if (e.target.files && e.target.files.length > 0) {
-                          setLocalFile(e.target.files[0]);
+                          const f = e.target.files[0];
+                          setLocalFile(f);
+                          setFileDisguiseWarning(null);
+                          setFileFormatError(null);
+                          const formatErr = checkFileExtension(f);
+                          setFileFormatError(formatErr);
+                          if (!formatErr) {
+                            const warning = await detectFileDisguise(f);
+                            setFileDisguiseWarning(warning);
+                          }
                           e.target.value = '';
                         }
                       }}
@@ -2367,7 +2498,7 @@ function LoadApp() {
                           </div>
                         </div>
                         {!localUploading && (
-                          <Button size="small" type="text" danger onClick={(e) => { e.stopPropagation(); setLocalFile(null); }}>
+                          <Button size="small" type="text" danger onClick={(e) => { e.stopPropagation(); setLocalFile(null); setFileDisguiseWarning(null); setFileFormatError(null); }}>
                             移除
                           </Button>
                         )}
@@ -2376,10 +2507,18 @@ function LoadApp() {
                       <div className="local-upload-placeholder">
                         <div style={{ fontSize: 36, marginBottom: 8 }}>📤</div>
                         <div>点击或拖拽文件到此处上传</div>
-                        <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>支持任意文件类型</div>
+                        <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>支持格式：mp4, mkv, mov, mp3, wav, m4a, srt, png, jpg</div>
                       </div>
                     )}
                   </div>
+
+                  {/* 文件格式错误 / 伪装警告 */}
+                  {(fileFormatError || fileDisguiseWarning) && (
+                    <div className="file-disguise-warning">
+                      <span className="file-disguise-warning-icon">⚠</span>
+                      <span>{fileFormatError || fileDisguiseWarning}</span>
+                    </div>
+                  )}
 
                   {/* 上传进度 */}
                   {localUploading && (
@@ -2395,7 +2534,7 @@ function LoadApp() {
                     <Button style={{ flex: 1 }} onClick={() => { if (localUploading) { cancelLocalUpload(); } else { setUploadStep('cloud_drive'); loadCloudDriveFiles(1, ''); } }}>
                       {localUploading ? '取消上传' : '返回云盘'}
                     </Button>
-                    <Button type="primary" className="btn-primary-gradient" style={{ flex: 1 }} loading={localUploading} disabled={!localFile} onClick={handleLocalFileUpload}>
+                    <Button type="primary" className="btn-primary-gradient" style={{ flex: 1 }} loading={localUploading} disabled={!localFile || !!fileDisguiseWarning || !!fileFormatError} onClick={handleLocalFileUpload}>
                       {localUploading ? '上传中...' : '开始上传'}
                     </Button>
                   </div>
