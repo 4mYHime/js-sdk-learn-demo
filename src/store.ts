@@ -1,5 +1,5 @@
 // 订单和任务数据存储模块
-import { apiListOrders, apiSaveOrder } from './api/orders';
+import { apiListOrders, apiSaveOrder, apiUpdateStatus, apiUpdateTask } from './api/orders';
 
 // 后端同步：fire-and-forget，不阻塞前端操作
 function syncToBackend(fn: () => Promise<any>) {
@@ -139,7 +139,10 @@ export function updateOrderStatus(orderId: string, status: OrderStatus, errorMes
     const index = orders.findIndex(o => o.id === order.id);
     if (index >= 0) orders[index] = order; else orders.unshift(order);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
-    syncToBackend(() => apiSaveOrder(order));
+    syncToBackend(async () => {
+      try { await apiUpdateStatus(orderId, status, errorMessage || ''); }
+      catch { const o = getOrder(orderId); if (o) await apiSaveOrder(o); }
+    });
   }
 }
 
@@ -158,7 +161,10 @@ export function updateOrderTask(orderId: string, task: ITask): void {
     const index = orders.findIndex(o => o.id === order.id);
     if (index >= 0) orders[index] = order; else orders.unshift(order);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
-    syncToBackend(() => apiSaveOrder(order));
+    syncToBackend(async () => {
+      try { await apiUpdateTask(orderId, task); }
+      catch { const o = getOrder(orderId); if (o) await apiSaveOrder(o); }
+    });
   }
 }
 
@@ -173,7 +179,10 @@ export function setOrderVideoUrl(orderId: string, videoUrl: string): void {
     const index = orders.findIndex(o => o.id === order.id);
     if (index >= 0) orders[index] = order; else orders.unshift(order);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
-    syncToBackend(() => apiSaveOrder(order));
+    syncToBackend(async () => {
+      try { await apiUpdateStatus(orderId, 'done', ''); }
+      catch { const o = getOrder(orderId); if (o) await apiSaveOrder(o); }
+    });
   }
 }
 
@@ -256,20 +265,58 @@ export function deleteOrder(orderId: string): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
 }
 
-// 从后端加载订单到localStorage（以后端数据为准）
+// 从后端加载订单到localStorage（智能合并：本地活跃订单优先，避免后端旧数据覆盖）
 export async function loadOrdersFromBackend(appKey: string): Promise<IOrder[]> {
   try {
     const backendOrders = await apiListOrders(appKey);
+    const localOrders = getUserOrders(appKey);
+    const otherOrders = getAllOrders().filter(o => o.appKey !== appKey);
+
     if (Array.isArray(backendOrders) && backendOrders.length > 0) {
-      // 以后端数据为准，直接覆盖本地
-      const sorted = (backendOrders as IOrder[]).sort((a, b) => b.createdAt - a.createdAt);
-      // 写入localStorage（替换该用户的所有订单）
-      const otherOrders = getAllOrders().filter(o => o.appKey !== appKey);
+      const localMap = new Map(localOrders.map(o => [o.id, o]));
+
+      // 【Fix35】智能合并：本地有活跃任务或数据更丰富时保留本地版本
+      const merged: IOrder[] = [];
+      const seenIds = new Set<string>();
+
+      for (const bo of backendOrders as IOrder[]) {
+        seenIds.add(bo.id);
+        const lo = localMap.get(bo.id);
+        if (lo) {
+          const localHasActiveTasks = lo.tasks?.some((t: any) =>
+            t.status === 'running' || t.status === 'pending' || t.status === 'wait_confirm'
+          );
+          const localHasMoreTasks = (lo.tasks?.length || 0) > (bo.tasks?.length || 0);
+          // 本地有活跃任务或任务数更多 → 保留本地（本地数据始终领先于异步同步的后端）
+          if (localHasActiveTasks || localHasMoreTasks) {
+            merged.push(lo);
+          } else {
+            // 兼容 updatedAt/updated_at 两种命名
+            const loTime = lo.updatedAt || (lo as any).updated_at || 0;
+            const boTime = bo.updatedAt || (bo as any).updated_at || 0;
+            merged.push(loTime >= boTime ? lo : bo);
+          }
+        } else {
+          merged.push(bo);
+        }
+      }
+
+      // 保留后端不存在但本地存在的订单（刚创建尚未同步到后端）
+      for (const lo of localOrders) {
+        if (!seenIds.has(lo.id)) {
+          merged.push(lo);
+        }
+      }
+
+      const sorted = merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       localStorage.setItem(STORAGE_KEY, JSON.stringify([...sorted, ...otherOrders]));
       return sorted;
     }
-    // 后端无数据时清空本地该用户订单
-    const otherOrders = getAllOrders().filter(o => o.appKey !== appKey);
+
+    // 后端无数据时保留本地订单（可能是刚创建尚未同步）
+    if (localOrders.length > 0) {
+      return localOrders;
+    }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(otherOrders));
     return [];
   } catch (err) {

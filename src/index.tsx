@@ -629,6 +629,23 @@ function LoadApp() {
           // 请求返回 status=2 后函数正常 return，但旧代码在此处 break 导致结果丢失
           const latestTask = getOrder(orderId)?.tasks.find(t => t.taskId === runningTask.taskId) || runningTask;
           const orderNum = result.api_response?.data?.task_order_num || '';
+
+          // 【Fix32】分段式交付：先判断 staged 暂停点，直接设为 wait_confirm，
+          // 不经过 done 中间态，不推进订单状态，避免竞态导致自动推进
+          if (order.deliveryMode === 'staged' && runningTask.type !== 'video' && (runningTask.type === 'viral_learn' || runningTask.type === 'script' || runningTask.type === 'clip' || runningTask.type === 'original_script' || runningTask.type === 'original_clip')) {
+            updateOrderTask(orderId, {
+              ...latestTask,
+              orderNum: orderNum,
+              status: 'wait_confirm',
+              result: result,
+              completedAt: Date.now()
+            });
+            console.log('分段式交付，任务待确认:', runningTask.type);
+            setCurrentOrder(getOrder(orderId));
+            break;
+          }
+
+          // 非分段/video任务：设为 done 并推进订单状态
           updateOrderTask(orderId, {
             ...latestTask,
             orderNum: orderNum,
@@ -655,20 +672,6 @@ function LoadApp() {
           if (runningTask.type === 'video') {
             const videoUrl = result.api_response?.data?.results?.tasks?.[0]?.video_url || '';
             setOrderVideoUrl(orderId, videoUrl);
-            setCurrentOrder(getOrder(orderId));
-            break;
-          }
-
-          // 分段式交付：viral_learn/script/clip/original_script/original_clip 完成后暂停，等待用户确认
-          if (order.deliveryMode === 'staged' && (runningTask.type === 'viral_learn' || runningTask.type === 'script' || runningTask.type === 'clip' || runningTask.type === 'original_script' || runningTask.type === 'original_clip')) {
-            updateOrderTask(orderId, {
-              ...latestTask,
-              orderNum: orderNum,
-              status: 'wait_confirm',
-              result: result,
-              completedAt: Date.now()
-            });
-            console.log('分段式交付，任务待确认:', runningTask.type);
             setCurrentOrder(getOrder(orderId));
             break;
           }
@@ -936,6 +939,10 @@ function LoadApp() {
           await new Promise(r => setTimeout(r, 1000));
           continue;
 
+        } else if (order.tasks.length === 0) {
+          // 【Fix33】订单刚创建、任务尚未写入（API调用中或localStorage被异步覆盖），静默退出等待后续触发
+          console.log('订单无任务，等待任务写入:', order.id, order.status);
+          break;
         } else {
           // 未知状态，标记为error并退出，防止无限重试
           console.warn('订单状态异常，无法继续:', order.status, JSON.stringify(order.tasks.map(t => ({ type: t.type, status: t.status, taskId: t.taskId }))));
