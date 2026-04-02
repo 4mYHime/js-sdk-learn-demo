@@ -1903,7 +1903,7 @@ function LoadApp() {
   const loadCloudDriveFiles = useCallback(async (page: number = 1, search: string = '') => {
     setCloudDriveFilesLoading(true);
     try {
-      const res = await fetchCloudFilesDirect(appKey, { page, pageSize: 20, search });
+      const res = await fetchCloudFilesDirect(appKey, { page, pageSize: 20, search, orderBy: 'created_at', order: 'desc' });
       setCloudDriveFiles(res.data.items);
       setCloudDriveFilesPage(res.data.page);
       setCloudDriveFilesTotalPages(res.data.total_pages);
@@ -1940,6 +1940,27 @@ function LoadApp() {
       message.error('删除失败: ' + error.message);
     } finally {
       setDeletingFileId(null);
+    }
+  };
+
+  // 我的云盘：下载文件
+  const handleCloudDriveDownload = async (fileId: string, fileName: string) => {
+    setDownloadingFileId(fileId);
+    try {
+      const url = await fetchFileDownloadUrl(appKey, fileId);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      message.success('开始下载');
+    } catch (error: any) {
+      message.error('下载失败: ' + error.message);
+    } finally {
+      setDownloadingFileId(null);
     }
   };
 
@@ -2357,7 +2378,7 @@ function LoadApp() {
                   <Button size="small" type="link" onClick={() => { setUploadStep('transfers'); loadTransferList(1); }}>
                     📋 传输列表
                   </Button>
-                  <Button size="small" type="link" onClick={() => loadCloudDriveFiles(cloudDriveFilesPage, cloudDriveSearch)} loading={cloudDriveFilesLoading}>
+                  <Button size="small" type="link" onClick={() => { loadCloudDriveFiles(cloudDriveFilesPage, cloudDriveSearch); fetchCloudDriveUsage(appKey).then(res => setCloudDriveUsage(res)).catch(() => {}); }} loading={cloudDriveFilesLoading}>
                     🔄 刷新
                   </Button>
                 </div>
@@ -2386,16 +2407,27 @@ function LoadApp() {
                             <span>{file.created_at}</span>
                           </div>
                         </div>
-                        <Button
-                          size="small"
-                          danger
-                          type="text"
-                          loading={deletingFileId === file.file_id}
-                          onClick={() => handleCloudDriveDelete(file.file_id)}
-                          style={{ fontSize: 12 }}
-                        >
-                          删除
-                        </Button>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <Button
+                            size="small"
+                            type="text"
+                            loading={downloadingFileId === file.file_id}
+                            onClick={() => handleCloudDriveDownload(file.file_id, file.file_name)}
+                            style={{ fontSize: 12, color: '#1677ff' }}
+                          >
+                            下载
+                          </Button>
+                          <Button
+                            size="small"
+                            danger
+                            type="text"
+                            loading={deletingFileId === file.file_id}
+                            onClick={() => handleCloudDriveDelete(file.file_id)}
+                            style={{ fontSize: 12 }}
+                          >
+                            删除
+                          </Button>
+                        </div>
                       </div>
                     );
                   })}
@@ -4213,13 +4245,6 @@ function LoadApp() {
             <Alert type="error" message="错误信息" description={
               <>
                 {currentOrder.errorMessage}
-                {currentOrder.status === 'error' && currentOrder.tasks.length > 0 && (
-                  <div style={{ marginTop: 8 }}>
-                    <Button size="small" type="primary" style={{ borderRadius: 8 }} onClick={() => resumeErrorOrder(currentOrder.id)}>
-                      🔄 继续执行
-                    </Button>
-                  </div>
-                )}
               </>
             } style={{ marginTop: 12 }} />
           )}
