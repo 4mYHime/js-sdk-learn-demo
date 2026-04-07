@@ -576,6 +576,14 @@ function LoadApp() {
     }
   };
   
+  // 【Fix36】校验任务创建API响应：无task_id或有error字段时抛异常，由调用方catch统一处理
+  const validateTaskCreation = (response: any, taskLabel: string) => {
+    if (!response?.task_id) {
+      const errMsg = response?.error || response?.message || response?.error_message || '未返回task_id';
+      throw new Error(`${taskLabel}创建失败: ${errMsg}`);
+    }
+  };
+
   // 恢复/继续订单工作流（while循环，无递归）
   const resumeOrderWorkflow = useCallback(async (orderId: string) => {
     if (pollingRef.current) {
@@ -746,6 +754,7 @@ function LoadApp() {
             vendor_requirements: order.vendorRequirements || `投放在${order.targetPlatform}，吸引18-35岁的年轻用户观看。`,
             story_info: order.storyInfo || ''
           });
+          validateTaskCreation(scriptResponse, '文案任务');
 
           // API 返回后更新为 running 状态
           const newScriptTask: ITask = {
@@ -791,6 +800,7 @@ function LoadApp() {
             },
             custom_cover: ''
           });
+          validateTaskCreation(clipResponse, '剪辑任务');
           
           const newClipTask: ITask = {
             type: 'clip', taskId: clipResponse.task_id, orderNum: '',
@@ -826,6 +836,7 @@ function LoadApp() {
             order_num: clipTask.orderNum,
             app_key: order.appKey
           });
+          validateTaskCreation(videoResponse, '视频合成任务');
           
           const newVideoTask: ITask = {
             type: 'video', taskId: videoResponse.task_id, orderNum: '',
@@ -881,6 +892,7 @@ function LoadApp() {
               back_colour: null, border_style: null, outline_colour: null, primary_colour: null
             }
           });
+          validateTaskCreation(ocResponse, '原创剪辑任务');
 
           const newOcTask: ITask = {
             type: 'original_clip', taskId: ocResponse.task_id, orderNum: '',
@@ -916,6 +928,7 @@ function LoadApp() {
             order_num: originalClipTask.orderNum,
             app_key: order.appKey
           });
+          validateTaskCreation(ocVideoResponse, '视频合成任务');
 
           const newOcVideoTask: ITask = {
             type: 'video', taskId: ocVideoResponse.task_id, orderNum: '',
@@ -1172,6 +1185,7 @@ function LoadApp() {
             narrator_type: order.narratorType,
             model_version: order.modelVersion
           });
+          validateTaskCreation(response, '爆款模型任务');
           newTaskId = response.task_id;
           break;
         }
@@ -1214,6 +1228,7 @@ function LoadApp() {
             vendor_requirements: `投放在${order.targetPlatform}，吸引18-35岁的年轻用户观看。`,
             story_info: ''
           });
+          validateTaskCreation(scriptResponse, '文案任务');
           newTaskId = scriptResponse.task_id;
           break;
         }
@@ -1237,6 +1252,7 @@ function LoadApp() {
             confirmed_movie_json: order.confirmedMovieJson || null,
             target_character_name: order.targetCharacterName || '主角名'
           });
+          validateTaskCreation(osResponse, '原创文案任务');
           newTaskId = osResponse.task_id;
           break;
         }
@@ -1271,6 +1287,7 @@ function LoadApp() {
               back_colour: null, border_style: null, outline_colour: null, primary_colour: null
             }
           });
+          validateTaskCreation(ocResponse, '原创剪辑任务');
           newTaskId = ocResponse.task_id;
           break;
         }
@@ -1290,6 +1307,7 @@ function LoadApp() {
             },
             custom_cover: ''
           });
+          validateTaskCreation(clipResponse, '剪辑任务');
           newTaskId = clipResponse.task_id;
           break;
         }
@@ -1300,6 +1318,7 @@ function LoadApp() {
             order_num: clipTask.orderNum,
             app_key: order.appKey
           });
+          validateTaskCreation(videoResponse, '视频合成任务');
           newTaskId = videoResponse.task_id;
           break;
         }
@@ -1423,6 +1442,7 @@ function LoadApp() {
           confirmed_movie_json: order.confirmedMovieJson || null,
           target_character_name: order.targetCharacterName || '主角名'
         });
+        validateTaskCreation(osResponse, '原创文案任务');
 
         const osTask: ITask = {
           type: 'original_script', taskId: osResponse.task_id, orderNum: '',
@@ -1442,6 +1462,7 @@ function LoadApp() {
           narrator_type: order.narratorType,
           model_version: order.modelVersion
         });
+        validateTaskCreation(viralResponse, '爆款模型任务');
 
         const viralTask: ITask = {
           type: 'viral_learn', taskId: viralResponse.task_id, orderNum: '',
@@ -1476,6 +1497,7 @@ function LoadApp() {
           vendor_requirements: order.vendorRequirements || `投放在${order.targetPlatform}，吸引18-35岁的年轻用户观看。`,
           story_info: order.storyInfo || ''
         });
+        validateTaskCreation(scriptResponse, '文案任务');
 
         const scriptTask: ITask = {
           type: 'script', taskId: scriptResponse.task_id, orderNum: '',
@@ -1769,6 +1791,7 @@ function LoadApp() {
           confirmed_movie_json: confirmedMovieJson || (!_isCustomMovie && selectedMovie ? buildConfirmedMovieJsonFromMovie(selectedMovie) : null),
           target_character_name: targetCharacterName || parseFirstCharacterName(selectedMovie.character_name) || '主角名'
         });
+        validateTaskCreation(osResponse, '原创文案任务');
 
         const osTask: ITask = {
           type: 'original_script',
@@ -1795,6 +1818,7 @@ function LoadApp() {
           narrator_type: narratorType,
           model_version: modelVersion
         });
+        validateTaskCreation(viralResponse, '爆款模型任务');
         
         const viralTask: ITask = {
           type: 'viral_learn',
@@ -1827,6 +1851,7 @@ function LoadApp() {
           vendor_requirements: vendorRequirements || `投放在${targetPlatform}，吸引18-35岁的年轻用户观看。`,
           story_info: selectedMovie.story_info || ''
         });
+        validateTaskCreation(scriptResponse, '文案任务');
         
         const scriptTask: ITask = {
           type: 'script',
