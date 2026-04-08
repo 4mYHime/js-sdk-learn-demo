@@ -327,6 +327,11 @@ function LoadApp() {
       setPlayingAudioUrl(url);
     }
   }, [playingAudioUrl]);
+
+  const stopAudio = useCallback(() => {
+    audioRef.current?.pause();
+    setPlayingAudioUrl(null);
+  }, []);
   
   // 组件卸载时停止音频
   useEffect(() => {
@@ -2852,7 +2857,7 @@ function LoadApp() {
                 <Radio.Button value="secondary" style={{ textAlign: 'center', borderRadius: 8 }}>二创文案</Radio.Button>
                 <Radio.Button value="original_热门影视" style={{ textAlign: 'center', borderRadius: 8 }}>原创·纯解说</Radio.Button>
                 <Radio.Button value="original_原声混剪" style={{ textAlign: 'center', borderRadius: 8 }}>原创·原声混剪</Radio.Button>
-                <Radio.Button value="original_冷门/新剧" style={{ textAlign: 'center', borderRadius: 8 }}>原创·冷门新剧</Radio.Button>
+                <Radio.Button value="original_冷门/新剧" style={{ textAlign: 'center', borderRadius: 8 }}>原创·冷门短剧</Radio.Button>
               </Radio.Group>
             </div>
 
@@ -3476,6 +3481,7 @@ function LoadApp() {
                           <div>类型: {selectedTemplate.narrator_type || selectedTemplate.type}</div>
                           <div>语言: {selectedTemplate.language || '中文'}</div>
                           {selectedTemplate.tags && <div>标签: {selectedTemplate.tags}</div>}
+                          {selectedTemplate.time && <div>时长: {selectedTemplate.time}</div>}
                         </>
                       )}
                     </div>
@@ -3510,6 +3516,7 @@ function LoadApp() {
                               <div>类型: {template.narrator_type || template.type}</div>
                               <div>语言: {template.language || '中文'}</div>
                               {template.tags && <div>标签: {template.tags}</div>}
+                              {template.time && <div>时长: {template.time}</div>}
                             </>
                           )}
                         </div>
@@ -3703,6 +3710,19 @@ function LoadApp() {
                             )}
                           </div>
                         </div>
+                        {selectedBGM.bgm_demo_url && selectedBGM.id !== -1 && selectedBGM.name !== '自定义' && (
+                          <Button 
+                            size="small" 
+                            type={playingAudioUrl === selectedBGM.bgm_demo_url ? 'primary' : 'default'}
+                            className="audio-play-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleAudio(selectedBGM.bgm_demo_url);
+                            }}
+                          >
+                            {playingAudioUrl === selectedBGM.bgm_demo_url ? '⏸ 暂停' : '▶ 试听'}
+                          </Button>
+                        )}
                         <div className="audio-card-check">✓</div>
                       </div>
                       {selectedBGM.name === '自定义' && selectedCustomBgmFile && (
@@ -3717,6 +3737,7 @@ function LoadApp() {
                       <div 
                         className={`audio-card ${selectedBGM?.id === -1 ? 'audio-card-selected' : ''}`}
                         onClick={() => {
+                          stopAudio();
                           setSelectedBGM({ id: -1, name: 'NO_BGM', bgm_file_id: 'NO_BGM', status: null, remark: null, bgm_demo_url: '', type: null, tag: null, description: null } as IBGM);
                           setSelectedCustomBgmFile(null);
                           setBgmListExpanded(false);
@@ -3739,6 +3760,7 @@ function LoadApp() {
                             key={bgm.id}
                             className={`audio-card ${isSelected ? 'audio-card-selected' : ''}`}
                             onClick={() => {
+                              stopAudio();
                               setSelectedBGM(bgm);
                               setSelectedCustomBgmFile(null);
                               if (bgm.name === '自定义') { loadCustomBgmFiles(); } else { setBgmListExpanded(false); }
@@ -3859,6 +3881,19 @@ function LoadApp() {
                             {selectedDubbing.language && <Tag color="cyan" style={{ fontSize: 10 }}>{selectedDubbing.language}</Tag>}
                           </div>
                         </div>
+                        {selectedDubbing.dubbing_demo_url && selectedDubbing.name !== '自定义' && (
+                          <Button 
+                            size="small" 
+                            type={playingAudioUrl === selectedDubbing.dubbing_demo_url ? 'primary' : 'default'}
+                            className="audio-play-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleAudio(selectedDubbing.dubbing_demo_url);
+                            }}
+                          >
+                            {playingAudioUrl === selectedDubbing.dubbing_demo_url ? '⏸ 暂停' : '▶ 试听'}
+                          </Button>
+                        )}
                         <div className="audio-card-check">✓</div>
                       </div>
                       {selectedDubbing.name === '自定义' && customDubbingText && (
@@ -3877,6 +3912,7 @@ function LoadApp() {
                             key={dub.id}
                             className={`audio-card ${isSelected ? 'audio-card-selected' : ''}`}
                             onClick={() => {
+                              stopAudio();
                               setSelectedDubbing(dub);
                               setCustomDubbingText('');
                               if (dub.name !== '自定义') { setDubbingListExpanded(false); }
