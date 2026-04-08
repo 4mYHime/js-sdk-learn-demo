@@ -2021,6 +2021,10 @@ function LoadApp() {
     setPreUploadLoading(true);
     try {
       const res = await preUpload({ link: uploadLink.trim(), tag: uploadTag.trim(), type_tag: uploadTypeTag, app_key: appKey });
+      if (res.code !== 10000) {
+        message.error(res.message || '链接解析失败，请检查链接是否正确');
+        return;
+      }
       setPreUploadResult(res);
       // 从返回的文件中提取 upload_id
       const allFiles = [...(res.data?.video || []), ...(res.data?.subtitle || []), ...(res.data?.image || []), ...(res.data?.other || [])];
@@ -2227,7 +2231,7 @@ function LoadApp() {
   const renderEstimateModal = () => {
     if (!estimateModalVisible) return null;
     return (
-      <div className="estimate-overlay" onClick={() => { if (!estimateLoading) setEstimateModalVisible(false); }}>
+      <div className="estimate-overlay">
         <div className="estimate-modal" onClick={(e) => e.stopPropagation()}>
           {!estimateLoading && (
             <button className="estimate-close-btn" onClick={() => setEstimateModalVisible(false)}>✕</button>
@@ -2354,7 +2358,7 @@ function LoadApp() {
   const renderUploadModal = () => {
     if (!uploadModalVisible) return null;
     return (
-      <div className="upload-modal-overlay" onClick={closeUploadModal}>
+      <div className="upload-modal-overlay">
         <div className="upload-modal" onClick={(e) => e.stopPropagation()}>
           <div className="upload-modal-header">
             <h3>{uploadStep === 'cloud_drive' ? '📁 我的云盘' : uploadStep === 'transfers' ? '📋 文件传输列表' : '📤 上传文件到云盘'}</h3>
