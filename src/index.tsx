@@ -3011,9 +3011,14 @@ function LoadApp() {
                     {movieSearchResults.map((movie, idx) => (
                       <Card key={idx} size="small" style={{ marginBottom: 6 }}>
                         <div style={{ display: 'flex', gap: 10 }}>
-                          {movie.poster_url && (
-                            <img src={movie.poster_url} alt={movie.local_title} style={{ width: 50, height: 70, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
-                          )}
+                          <div style={{ width: 50, height: 70, borderRadius: 4, flexShrink: 0, overflow: 'hidden', position: 'relative', background: '#f0f0f0' }}>
+                            {movie.poster_url ? (
+                              <img src={movie.poster_url} alt={movie.local_title} style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }}
+                              />
+                            ) : null}
+                            <div className={movie.poster_url ? 'hidden' : ''} style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>🎬</div>
+                          </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontWeight: 600, fontSize: 13 }}>{movie.local_title}</div>
                             <div style={{ fontSize: 11, color: '#666' }}>{movie.title} ({movie.year})</div>
