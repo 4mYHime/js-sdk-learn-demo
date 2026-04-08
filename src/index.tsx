@@ -3565,7 +3565,7 @@ function LoadApp() {
                     <div
                       key={template.id}
                       className={`select-card ${selectedTemplate?.id === template.id ? 'selected' : ''}`}
-                      onClick={() => { setSelectedTemplate(template); setTemplateListExpanded(false); if (template.name === '自定义') { if (viralSrtFiles.length === 0) loadViralSrtFiles(); if (viralVideoFiles.length === 0) loadViralVideoFiles(); } }}
+                      onClick={() => { setSelectedTemplate(template); setTemplateListExpanded(false); if (template.name === '自定义') { if (viralSrtFiles.length === 0) loadViralSrtFiles(); } }}
                     >
                       {template.img ? (
                         <img className="select-card-cover" src={template.img} alt={template.name}
@@ -3650,66 +3650,6 @@ function LoadApp() {
                             <Button size="small" disabled={viralSrtFilesPage <= 1} onClick={() => goToViralSrtPage(viralSrtFilesPage - 1)}>上一页</Button>
                             <span style={{ fontSize: 12, lineHeight: '24px' }}>{viralSrtFilesPage}/{viralSrtFilesTotalPages}</span>
                             <Button size="small" disabled={viralSrtFilesPage >= viralSrtFilesTotalPages} onClick={() => goToViralSrtPage(viralSrtFilesPage + 1)}>下一页</Button>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </>
-                )}
-
-                {/* 爆款视频文件（可选） */}
-                <div style={{ marginTop: 14, marginBottom: 10 }}>
-                  <label className="form-label" style={{ fontSize: 11, marginBottom: 4 }}>
-                    已选爆款视频 <span style={{ color: '#999' }}>可选</span>
-                  </label>
-                  {selectedViralVideoFile ? (
-                    <Tag color="purple" closable onClose={() => setSelectedViralVideoFile(null)} title={selectedViralVideoFile.file_name}
-                      style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer' }}
-                      onClick={() => { navigator.clipboard.writeText(selectedViralVideoFile.file_name); message.success('文件名已复制'); }}>
-                      {selectedViralVideoFile.file_name}
-                    </Tag>
-                  ) : (
-                    <Tag color="default">未选择</Tag>
-                  )}
-                </div>
-
-                {!selectedViralVideoFile && (
-                  <>
-                    <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <label className="form-label" style={{ marginBottom: 0, fontSize: 12 }}>爆款视频文件列表</label>
-                      <Button size="small" onClick={() => loadViralVideoFiles(viralVideoFilesPage)} loading={viralVideoFilesLoading}>刷新</Button>
-                    </div>
-                    {viralVideoFilesLoading ? (
-                      <Spin tip="加载爆款视频文件..." />
-                    ) : (
-                      <>
-                        <List
-                          size="small"
-                          dataSource={viralVideoFiles}
-                          renderItem={(file: ICloudFile) => (
-                              <Card size="small" style={{ marginBottom: 4 }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div title={file.file_name} style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                      {file.file_name}
-                                    </div>
-                                    <div style={{ fontSize: 10, color: '#999' }}>
-                                      {(file.file_size / 1024 / 1024).toFixed(1)}MB | {file.suffix} | {file.created_at}
-                                    </div>
-                                  </div>
-                                  <Button size="small" style={{ marginLeft: 8 }}
-                                    onClick={() => setSelectedViralVideoFile(file)}>
-                                    选择
-                                  </Button>
-                                </div>
-                              </Card>
-                          )}
-                        />
-                        {viralVideoFilesTotalPages > 1 && (
-                          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
-                            <Button size="small" disabled={viralVideoFilesPage <= 1} onClick={() => goToViralVideoPage(viralVideoFilesPage - 1)}>上一页</Button>
-                            <span style={{ fontSize: 12, lineHeight: '24px' }}>{viralVideoFilesPage}/{viralVideoFilesTotalPages}</span>
-                            <Button size="small" disabled={viralVideoFilesPage >= viralVideoFilesTotalPages} onClick={() => goToViralVideoPage(viralVideoFilesPage + 1)}>下一页</Button>
                           </div>
                         )}
                       </>
