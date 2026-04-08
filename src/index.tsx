@@ -28,6 +28,13 @@ type PageType = 'login' | 'orders' | 'detail' | 'create';
 // 任务阶段
 type TaskPhase = 'idle' | 'script' | 'clip' | 'video' | 'done' | 'error';
 
+// 文件后缀筛选常量
+const SUBTITLE_EXTS = ['srt'];
+const VIDEO_EXTS = ['mp4', 'mkv', 'mov'];
+const AUDIO_EXTS = ['mp3', 'wav', 'm4a'];
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg'];
+const FILE_PAGE_SIZE = 20;
+
 function LoadApp() {
   // 页面和用户状态
   const [page, setPage] = useState<PageType>('login');
@@ -373,14 +380,18 @@ function LoadApp() {
     }
   }, []);
   
-  // 加载 episode SRT 文件列表（search=srt）
+  // 加载 episode SRT 文件列表（前端按后缀筛选）
   const loadEpisodeSrtFiles = useCallback(async (page: number = 1) => {
     setEpisodeSrtFilesLoading(true);
     try {
-      const res = await fetchCloudFilesDirect(appKey, { page, pageSize: 20, search: 'srt' });
-      setEpisodeSrtFiles(res.data.items);
-      setEpisodeSrtFilesTotalPages(res.data.total_pages);
-      setEpisodeSrtFilesPage(res.data.page);
+      const res = await fetchCloudFilesDirect(appKey, { page: 1, pageSize: 200, search: 'srt' });
+      const items = (res?.data?.items || []).filter((f: ICloudFile) => SUBTITLE_EXTS.includes(f.suffix?.toLowerCase()));
+      setAllEpisodeSrtFiles(items);
+      const totalPages = Math.max(1, Math.ceil(items.length / FILE_PAGE_SIZE));
+      const safePage = Math.min(page, totalPages);
+      setEpisodeSrtFiles(items.slice((safePage - 1) * FILE_PAGE_SIZE, safePage * FILE_PAGE_SIZE));
+      setEpisodeSrtFilesTotalPages(totalPages);
+      setEpisodeSrtFilesPage(safePage);
     } catch (error) {
       console.error('加载SRT文件失败:', error);
     } finally {
@@ -388,14 +399,18 @@ function LoadApp() {
     }
   }, [appKey]);
 
-  // 加载 episode 视频文件列表（order_by=file_size, desc）
+  // 加载 episode 视频文件列表（前端按后缀筛选，按大小排序）
   const loadEpisodeVideoFiles = useCallback(async (page: number = 1) => {
     setEpisodeVideoFilesLoading(true);
     try {
-      const res = await fetchCloudFilesDirect(appKey, { page, pageSize: 20, orderBy: 'file_size', order: 'desc' });
-      setEpisodeVideoFiles(res.data.items);
-      setEpisodeVideoFilesTotalPages(res.data.total_pages);
-      setEpisodeVideoFilesPage(res.data.page);
+      const res = await fetchCloudFilesDirect(appKey, { page: 1, pageSize: 200, orderBy: 'file_size', order: 'desc' });
+      const items = (res?.data?.items || []).filter((f: ICloudFile) => VIDEO_EXTS.includes(f.suffix?.toLowerCase()));
+      setAllEpisodeVideoFiles(items);
+      const totalPages = Math.max(1, Math.ceil(items.length / FILE_PAGE_SIZE));
+      const safePage = Math.min(page, totalPages);
+      setEpisodeVideoFiles(items.slice((safePage - 1) * FILE_PAGE_SIZE, safePage * FILE_PAGE_SIZE));
+      setEpisodeVideoFilesTotalPages(totalPages);
+      setEpisodeVideoFilesPage(safePage);
     } catch (error) {
       console.error('加载视频文件失败:', error);
     } finally {
@@ -403,14 +418,18 @@ function LoadApp() {
     }
   }, [appKey]);
 
-  // 加载爆款 SRT 文件列表（search=srt，用于自定义模板）
+  // 加载爆款 SRT 文件列表（前端按后缀筛选，用于自定义模板）
   const loadViralSrtFiles = useCallback(async (page: number = 1) => {
     setViralSrtFilesLoading(true);
     try {
-      const res = await fetchCloudFilesDirect(appKey, { page, pageSize: 20, search: 'srt' });
-      setViralSrtFiles(res.data.items);
-      setViralSrtFilesTotalPages(res.data.total_pages);
-      setViralSrtFilesPage(res.data.page);
+      const res = await fetchCloudFilesDirect(appKey, { page: 1, pageSize: 200, search: 'srt' });
+      const items = (res?.data?.items || []).filter((f: ICloudFile) => SUBTITLE_EXTS.includes(f.suffix?.toLowerCase()));
+      setAllViralSrtFiles(items);
+      const totalPages = Math.max(1, Math.ceil(items.length / FILE_PAGE_SIZE));
+      const safePage = Math.min(page, totalPages);
+      setViralSrtFiles(items.slice((safePage - 1) * FILE_PAGE_SIZE, safePage * FILE_PAGE_SIZE));
+      setViralSrtFilesTotalPages(totalPages);
+      setViralSrtFilesPage(safePage);
     } catch (error) {
       console.error('加载爆款SRT文件失败:', error);
     } finally {
@@ -418,14 +437,18 @@ function LoadApp() {
     }
   }, [appKey]);
 
-  // 加载爆款 Video 文件列表（search=mp4，用于自定义模板可选视频）
+  // 加载爆款 Video 文件列表（前端按后缀筛选，用于自定义模板可选视频）
   const loadViralVideoFiles = useCallback(async (page: number = 1) => {
     setViralVideoFilesLoading(true);
     try {
-      const res = await fetchCloudFilesDirect(appKey, { page, pageSize: 20, search: 'mp4' });
-      setViralVideoFiles(res.data.items);
-      setViralVideoFilesTotalPages(res.data.total_pages);
-      setViralVideoFilesPage(res.data.page);
+      const res = await fetchCloudFilesDirect(appKey, { page: 1, pageSize: 200 });
+      const items = (res?.data?.items || []).filter((f: ICloudFile) => VIDEO_EXTS.includes(f.suffix?.toLowerCase()));
+      setAllViralVideoFiles(items);
+      const totalPages = Math.max(1, Math.ceil(items.length / FILE_PAGE_SIZE));
+      const safePage = Math.min(page, totalPages);
+      setViralVideoFiles(items.slice((safePage - 1) * FILE_PAGE_SIZE, safePage * FILE_PAGE_SIZE));
+      setViralVideoFilesTotalPages(totalPages);
+      setViralVideoFilesPage(safePage);
     } catch (error) {
       console.error('加载爆款Video文件失败:', error);
     } finally {
@@ -433,20 +456,22 @@ function LoadApp() {
     }
   }, [appKey]);
 
-  // 加载自定义 BGM 云盘文件列表（拉取全部文件后前端筛选音频格式并分页）
+  // 前端筛选用的全量文件缓存
+  const [allEpisodeSrtFiles, setAllEpisodeSrtFiles] = useState<ICloudFile[]>([]);
+  const [allEpisodeVideoFiles, setAllEpisodeVideoFiles] = useState<ICloudFile[]>([]);
+  const [allViralSrtFiles, setAllViralSrtFiles] = useState<ICloudFile[]>([]);
+  const [allViralVideoFiles, setAllViralVideoFiles] = useState<ICloudFile[]>([]);
   const [allBgmFiles, setAllBgmFiles] = useState<ICloudFile[]>([]);
-  const BGM_PAGE_SIZE = 20;
   const loadCustomBgmFiles = useCallback(async (page: number = 1) => {
     setCustomBgmFilesLoading(true);
     try {
-      // 一次拉取足够多的文件，前端筛选音频格式
       const res = await fetchCloudFilesDirect(appKey, { page: 1, pageSize: 200 });
       const items = res?.data?.items || [];
-      const audioFiles = items.filter((f: ICloudFile) => ['mp3', 'm4a', 'mav', 'wav', 'aac', 'flac', 'ogg'].includes(f.suffix));
+      const audioFiles = items.filter((f: ICloudFile) => AUDIO_EXTS.includes(f.suffix?.toLowerCase()));
       setAllBgmFiles(audioFiles);
-      const totalPages = Math.max(1, Math.ceil(audioFiles.length / BGM_PAGE_SIZE));
+      const totalPages = Math.max(1, Math.ceil(audioFiles.length / FILE_PAGE_SIZE));
       const safePage = Math.min(page, totalPages);
-      setCustomBgmFiles(audioFiles.slice((safePage - 1) * BGM_PAGE_SIZE, safePage * BGM_PAGE_SIZE));
+      setCustomBgmFiles(audioFiles.slice((safePage - 1) * FILE_PAGE_SIZE, safePage * FILE_PAGE_SIZE));
       setCustomBgmFilesTotalPages(totalPages);
       setCustomBgmFilesPage(safePage);
     } catch (error) {
@@ -456,11 +481,44 @@ function LoadApp() {
       setCustomBgmFilesLoading(false);
     }
   }, [appKey]);
-  // BGM 前端翻页（不重新请求API）
-  const goToBgmPage = useCallback((page: number) => {
-    const totalPages = Math.max(1, Math.ceil(allBgmFiles.length / BGM_PAGE_SIZE));
+
+  // 前端翻页函数（不重新请求API）
+  const goToEpisodeSrtPage = useCallback((page: number) => {
+    const totalPages = Math.max(1, Math.ceil(allEpisodeSrtFiles.length / FILE_PAGE_SIZE));
     const safePage = Math.max(1, Math.min(page, totalPages));
-    setCustomBgmFiles(allBgmFiles.slice((safePage - 1) * BGM_PAGE_SIZE, safePage * BGM_PAGE_SIZE));
+    setEpisodeSrtFiles(allEpisodeSrtFiles.slice((safePage - 1) * FILE_PAGE_SIZE, safePage * FILE_PAGE_SIZE));
+    setEpisodeSrtFilesPage(safePage);
+    setEpisodeSrtFilesTotalPages(totalPages);
+  }, [allEpisodeSrtFiles]);
+
+  const goToEpisodeVideoPage = useCallback((page: number) => {
+    const totalPages = Math.max(1, Math.ceil(allEpisodeVideoFiles.length / FILE_PAGE_SIZE));
+    const safePage = Math.max(1, Math.min(page, totalPages));
+    setEpisodeVideoFiles(allEpisodeVideoFiles.slice((safePage - 1) * FILE_PAGE_SIZE, safePage * FILE_PAGE_SIZE));
+    setEpisodeVideoFilesPage(safePage);
+    setEpisodeVideoFilesTotalPages(totalPages);
+  }, [allEpisodeVideoFiles]);
+
+  const goToViralSrtPage = useCallback((page: number) => {
+    const totalPages = Math.max(1, Math.ceil(allViralSrtFiles.length / FILE_PAGE_SIZE));
+    const safePage = Math.max(1, Math.min(page, totalPages));
+    setViralSrtFiles(allViralSrtFiles.slice((safePage - 1) * FILE_PAGE_SIZE, safePage * FILE_PAGE_SIZE));
+    setViralSrtFilesPage(safePage);
+    setViralSrtFilesTotalPages(totalPages);
+  }, [allViralSrtFiles]);
+
+  const goToViralVideoPage = useCallback((page: number) => {
+    const totalPages = Math.max(1, Math.ceil(allViralVideoFiles.length / FILE_PAGE_SIZE));
+    const safePage = Math.max(1, Math.min(page, totalPages));
+    setViralVideoFiles(allViralVideoFiles.slice((safePage - 1) * FILE_PAGE_SIZE, safePage * FILE_PAGE_SIZE));
+    setViralVideoFilesPage(safePage);
+    setViralVideoFilesTotalPages(totalPages);
+  }, [allViralVideoFiles]);
+
+  const goToBgmPage = useCallback((page: number) => {
+    const totalPages = Math.max(1, Math.ceil(allBgmFiles.length / FILE_PAGE_SIZE));
+    const safePage = Math.max(1, Math.min(page, totalPages));
+    setCustomBgmFiles(allBgmFiles.slice((safePage - 1) * FILE_PAGE_SIZE, safePage * FILE_PAGE_SIZE));
     setCustomBgmFilesPage(safePage);
     setCustomBgmFilesTotalPages(totalPages);
   }, [allBgmFiles]);
@@ -3176,9 +3234,9 @@ function LoadApp() {
                               />
                               {episodeSrtFilesTotalPages > 1 && (
                                 <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
-                                  <Button size="small" disabled={episodeSrtFilesPage <= 1} onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage - 1)}>上一页</Button>
+                                  <Button size="small" disabled={episodeSrtFilesPage <= 1} onClick={() => goToEpisodeSrtPage(episodeSrtFilesPage - 1)}>上一页</Button>
                                   <span style={{ fontSize: 12, lineHeight: '24px' }}>{episodeSrtFilesPage}/{episodeSrtFilesTotalPages}</span>
-                                  <Button size="small" disabled={episodeSrtFilesPage >= episodeSrtFilesTotalPages} onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage + 1)}>下一页</Button>
+                                  <Button size="small" disabled={episodeSrtFilesPage >= episodeSrtFilesTotalPages} onClick={() => goToEpisodeSrtPage(episodeSrtFilesPage + 1)}>下一页</Button>
                                 </div>
                               )}
                             </>
@@ -3226,9 +3284,9 @@ function LoadApp() {
                               />
                               {episodeVideoFilesTotalPages > 1 && (
                                 <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
-                                  <Button size="small" disabled={episodeVideoFilesPage <= 1} onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage - 1)}>上一页</Button>
+                                  <Button size="small" disabled={episodeVideoFilesPage <= 1} onClick={() => goToEpisodeVideoPage(episodeVideoFilesPage - 1)}>上一页</Button>
                                   <span style={{ fontSize: 12, lineHeight: '24px' }}>{episodeVideoFilesPage}/{episodeVideoFilesTotalPages}</span>
-                                  <Button size="small" disabled={episodeVideoFilesPage >= episodeVideoFilesTotalPages} onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage + 1)}>下一页</Button>
+                                  <Button size="small" disabled={episodeVideoFilesPage >= episodeVideoFilesTotalPages} onClick={() => goToEpisodeVideoPage(episodeVideoFilesPage + 1)}>下一页</Button>
                                 </div>
                               )}
                             </>
@@ -3347,9 +3405,9 @@ function LoadApp() {
                             />
                             {episodeSrtFilesTotalPages > 1 && (
                               <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
-                                <Button size="small" disabled={episodeSrtFilesPage <= 1} onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage - 1)}>上一页</Button>
+                                <Button size="small" disabled={episodeSrtFilesPage <= 1} onClick={() => goToEpisodeSrtPage(episodeSrtFilesPage - 1)}>上一页</Button>
                                 <span style={{ fontSize: 12, lineHeight: '24px' }}>{episodeSrtFilesPage}/{episodeSrtFilesTotalPages}</span>
-                                <Button size="small" disabled={episodeSrtFilesPage >= episodeSrtFilesTotalPages} onClick={() => loadEpisodeSrtFiles(episodeSrtFilesPage + 1)}>下一页</Button>
+                                <Button size="small" disabled={episodeSrtFilesPage >= episodeSrtFilesTotalPages} onClick={() => goToEpisodeSrtPage(episodeSrtFilesPage + 1)}>下一页</Button>
                               </div>
                             )}
                           </>
@@ -3397,9 +3455,9 @@ function LoadApp() {
                             />
                             {episodeVideoFilesTotalPages > 1 && (
                               <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
-                                <Button size="small" disabled={episodeVideoFilesPage <= 1} onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage - 1)}>上一页</Button>
+                                <Button size="small" disabled={episodeVideoFilesPage <= 1} onClick={() => goToEpisodeVideoPage(episodeVideoFilesPage - 1)}>上一页</Button>
                                 <span style={{ fontSize: 12, lineHeight: '24px' }}>{episodeVideoFilesPage}/{episodeVideoFilesTotalPages}</span>
-                                <Button size="small" disabled={episodeVideoFilesPage >= episodeVideoFilesTotalPages} onClick={() => loadEpisodeVideoFiles(episodeVideoFilesPage + 1)}>下一页</Button>
+                                <Button size="small" disabled={episodeVideoFilesPage >= episodeVideoFilesTotalPages} onClick={() => goToEpisodeVideoPage(episodeVideoFilesPage + 1)}>下一页</Button>
                               </div>
                             )}
                           </>
@@ -3589,9 +3647,9 @@ function LoadApp() {
                         />
                         {viralSrtFilesTotalPages > 1 && (
                           <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
-                            <Button size="small" disabled={viralSrtFilesPage <= 1} onClick={() => loadViralSrtFiles(viralSrtFilesPage - 1)}>上一页</Button>
+                            <Button size="small" disabled={viralSrtFilesPage <= 1} onClick={() => goToViralSrtPage(viralSrtFilesPage - 1)}>上一页</Button>
                             <span style={{ fontSize: 12, lineHeight: '24px' }}>{viralSrtFilesPage}/{viralSrtFilesTotalPages}</span>
-                            <Button size="small" disabled={viralSrtFilesPage >= viralSrtFilesTotalPages} onClick={() => loadViralSrtFiles(viralSrtFilesPage + 1)}>下一页</Button>
+                            <Button size="small" disabled={viralSrtFilesPage >= viralSrtFilesTotalPages} onClick={() => goToViralSrtPage(viralSrtFilesPage + 1)}>下一页</Button>
                           </div>
                         )}
                       </>
@@ -3649,9 +3707,9 @@ function LoadApp() {
                         />
                         {viralVideoFilesTotalPages > 1 && (
                           <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8 }}>
-                            <Button size="small" disabled={viralVideoFilesPage <= 1} onClick={() => loadViralVideoFiles(viralVideoFilesPage - 1)}>上一页</Button>
+                            <Button size="small" disabled={viralVideoFilesPage <= 1} onClick={() => goToViralVideoPage(viralVideoFilesPage - 1)}>上一页</Button>
                             <span style={{ fontSize: 12, lineHeight: '24px' }}>{viralVideoFilesPage}/{viralVideoFilesTotalPages}</span>
-                            <Button size="small" disabled={viralVideoFilesPage >= viralVideoFilesTotalPages} onClick={() => loadViralVideoFiles(viralVideoFilesPage + 1)}>下一页</Button>
+                            <Button size="small" disabled={viralVideoFilesPage >= viralVideoFilesTotalPages} onClick={() => goToViralVideoPage(viralVideoFilesPage + 1)}>下一页</Button>
                           </div>
                         )}
                       </>
