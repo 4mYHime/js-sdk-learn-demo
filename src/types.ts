@@ -400,6 +400,7 @@ export interface IOriginalClipRequest {
   font_path: string | null;
   custom_cover: string;
   dubbing_type: string;
+  playlet_name: string;
   episodes_data: Array<{
     num: number;
     srt_oss_key: string;

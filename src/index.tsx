@@ -948,6 +948,7 @@ function LoadApp() {
             font_path: null,
             custom_cover: '',
             dubbing_type: 'default',
+            playlet_name: order.movieName,
             episodes_data: ocEpisodesData,
             subtitle_style: {
               shadow: null, outline: null, fontname: null, fontsize: null,
@@ -1343,6 +1344,7 @@ function LoadApp() {
             font_path: null,
             custom_cover: '',
             dubbing_type: 'default',
+            playlet_name: order.movieName,
             episodes_data: ocEpisodesData,
             subtitle_style: {
               shadow: null, outline: null, fontname: null, fontsize: null,
