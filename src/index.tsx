@@ -163,6 +163,8 @@ function LoadApp() {
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('staged');
   const [movieListExpanded, setMovieListExpanded] = useState(true);
   const [templateListExpanded, setTemplateListExpanded] = useState(true);
+  const [templateSearchQuery, setTemplateSearchQuery] = useState('');
+  const [templateFilterTag, setTemplateFilterTag] = useState<string | null>(null);
   const [bgmListExpanded, setBgmListExpanded] = useState(true);
   const [dubbingListExpanded, setDubbingListExpanded] = useState(true);
   
@@ -1616,6 +1618,8 @@ function LoadApp() {
     setMovieSearchModalVisible(false);
     setMovieListExpanded(true);
     setTemplateListExpanded(true);
+    setTemplateSearchQuery('');
+    setTemplateFilterTag(null);
     setBgmListExpanded(true);
     setDubbingListExpanded(true);
     setTaskPhase('idle');
@@ -1982,6 +1986,8 @@ function LoadApp() {
     setMovieSearchModalVisible(false);
     setMovieListExpanded(true);
     setTemplateListExpanded(true);
+    setTemplateSearchQuery('');
+    setTemplateFilterTag(null);
     setBgmListExpanded(true);
     setDubbingListExpanded(true);
     setTaskPhase('idle');
@@ -2875,6 +2881,8 @@ function LoadApp() {
                   const val = e.target.value as string;
                   setSelectedTemplate(null);
                   setTemplateListExpanded(true);
+                  setTemplateSearchQuery('');
+                  setTemplateFilterTag(null);
                   setSelectedViralSrtFile(null);
                   setSelectedViralVideoFile(null);
                   setConfirmedMovieJson(null);
@@ -2934,6 +2942,8 @@ function LoadApp() {
                     setNarratorType(v);
                     setSelectedTemplate(null);
                     setTemplateListExpanded(true);
+                    setTemplateSearchQuery('');
+                    setTemplateFilterTag(null);
                     setSelectedMovie(null);
                     setMovieListExpanded(true);
                     setSelectedEpisodeSrtFile(null);
@@ -3486,7 +3496,20 @@ function LoadApp() {
         };
         const typeValue = String(typeValueMap[`${narratorType}_${modelVersion}`] ?? 11);
         const filteredTemplates = templates.filter(t => t.type === typeValue);
-        const allTemplates = [customTemplateOption, ...filteredTemplates];
+        // 提取去重标签
+        const allTagsSet = new Set<string>();
+        filteredTemplates.forEach(t => {
+          if (t.tags) t.tags.split(/[,，、\s]+/).filter(Boolean).forEach(tag => allTagsSet.add(tag.trim()));
+        });
+        const allTagsList = Array.from(allTagsSet);
+        // 搜索 + 标签筛选
+        const searchFiltered = filteredTemplates.filter(t => {
+          const q = templateSearchQuery.trim().toLowerCase();
+          const matchSearch = !q || t.name.toLowerCase().includes(q) || (t.tags || '').toLowerCase().includes(q);
+          const matchTag = !templateFilterTag || (t.tags || '').includes(templateFilterTag);
+          return matchSearch && matchTag;
+        });
+        const allTemplates = [customTemplateOption, ...searchFiltered];
         return (
           <div>
             {/* 原创文案配置 */}
@@ -3531,6 +3554,34 @@ function LoadApp() {
                 <Button size="small" type="link" onClick={() => setTemplateListExpanded(true)}>重新选择</Button>
               )}
             </div>
+            {(!selectedTemplate || templateListExpanded) && (
+              <div style={{ marginBottom: 8 }}>
+                <Input
+                  placeholder="搜索模板名称或标签..."
+                  allowClear
+                  value={templateSearchQuery}
+                  onChange={(e) => setTemplateSearchQuery(e.target.value)}
+                  style={{ marginBottom: 6 }}
+                />
+                {allTagsList.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    <Tag
+                      color={templateFilterTag === null ? '#5b21b6' : undefined}
+                      style={{ cursor: 'pointer', marginRight: 0 }}
+                      onClick={() => setTemplateFilterTag(null)}
+                    >全部</Tag>
+                    {allTagsList.map(tag => (
+                      <Tag
+                        key={tag}
+                        color={templateFilterTag === tag ? '#5b21b6' : undefined}
+                        style={{ cursor: 'pointer', marginRight: 0 }}
+                        onClick={() => setTemplateFilterTag(templateFilterTag === tag ? null : tag)}
+                      >{tag}</Tag>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {selectedTemplate && !templateListExpanded ? (
               <div className={`movie-list-scroll ${isCustomTemplate ? 'compact' : ''}`}>
                 <div className="select-card selected">
