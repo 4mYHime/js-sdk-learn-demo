@@ -2348,12 +2348,12 @@ function LoadApp() {
                       <div className="estimate-detail-list">
                         <div className="estimate-detail-row">
                           <span className="estimate-detail-label"><span className="estimate-icon">{taskIcon}</span>{taskLabel}</span>
-                          <span className="estimate-detail-value">{taskPoints}<small> 点</small></span>
+                          <span className="estimate-detail-value">{parseFloat(taskPoints.toFixed(2))}<small> 点</small></span>
                         </div>
                       </div>
                       <div className="estimate-total-row">
                         <span className="estimate-total-label">本次消耗</span>
-                        <span className="estimate-total-value">{taskPoints}<small> 点</small></span>
+                        <span className="estimate-total-value">{parseFloat(taskPoints.toFixed(2))}<small> 点</small></span>
                       </div>
                     </>
                   );
@@ -2383,13 +2383,13 @@ function LoadApp() {
                       {allStages.map((stage, i) => (
                         <div className="estimate-detail-row" key={i}>
                           <span className="estimate-detail-label"><span className="estimate-icon">{stage.icon}</span>{stage.label}</span>
-                          <span className="estimate-detail-value">{stage.points}<small> 点</small></span>
+                          <span className="estimate-detail-value">{parseFloat(stage.points.toFixed(2))}<small> 点</small></span>
                         </div>
                       ))}
                     </div>
                     <div className="estimate-total-row">
                       <span className="estimate-total-label">预估总消耗</span>
-                      <span className="estimate-total-value">{copywritingType === 'original' ? ((estimateResult.text_model_points ?? 0) + (estimateResult.video_synthesis_points ?? 0)) : estimateResult.total_consume_points}<small> 点</small></span>
+                      <span className="estimate-total-value">{parseFloat((copywritingType === 'original' ? ((estimateResult.text_model_points ?? 0) + (estimateResult.video_synthesis_points ?? 0)) : (estimateResult.total_consume_points ?? 0)).toFixed(2))}<small> 点</small></span>
                     </div>
                   </>
                 );
