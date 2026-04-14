@@ -674,6 +674,15 @@ function LoadApp() {
           break;
         }
         
+        // 【Fix39】早期检测已失败任务：避免订单任务已error但订单未标记error时进入无效推进逻辑
+        const errorTask = order.tasks.find(t => t.status === 'error');
+        if (errorTask) {
+          console.warn('检测到已失败任务，标记订单为错误:', errorTask.type, errorTask.errorMessage);
+          updateOrderStatus(orderId, 'error', errorTask.errorMessage || '任务执行失败');
+          setCurrentOrder(getOrder(orderId));
+          break;
+        }
+        
         // 1. 查找running的任务 → 轮询
         const runningTask = order.tasks.find(t => t.status === 'running');
         if (runningTask) {
@@ -1014,13 +1023,32 @@ function LoadApp() {
           
         } else if (order.tasks.some(t => t.status === 'pending')) {
           // 有占位任务（API调用进行中），等待后重试
+          // 【Fix39】增加超时检测：超过60秒的pending任务视为创建失败
+          const pendingTask = order.tasks.find(t => t.status === 'pending');
+          const pendingDuration = Date.now() - (pendingTask?.createdAt || Date.now());
+          if (pendingDuration > 60000) {
+            console.error('占位任务超时:', pendingTask?.type, `${Math.round(pendingDuration / 1000)}秒`);
+            if (pendingTask) {
+              updateOrderTask(orderId, { ...pendingTask, status: 'error', errorMessage: '任务创建超时' });
+            }
+            updateOrderStatus(orderId, 'error', '任务创建超时，请重试');
+            setCurrentOrder(getOrder(orderId));
+            break;
+          }
           console.log('有占位任务，等待API响应:', order.tasks.filter(t => t.status === 'pending').map(t => t.type));
           await new Promise(r => setTimeout(r, 1000));
           continue;
 
         } else if (order.tasks.length === 0) {
-          // 【Fix33】订单刚创建、任务尚未写入（API调用中或localStorage被异步覆盖），静默退出等待后续触发
-          console.log('订单无任务，等待任务写入:', order.id, order.status);
+          // 【Fix39】订单状态已推进但无任务 = 数据损坏，标记为error
+          if (order.status !== 'pending') {
+            console.error('订单已推进但无任务，标记为错误:', order.id, order.status);
+            updateOrderStatus(orderId, 'error', '订单数据异常：无任务记录。请重新创建订单。');
+            setCurrentOrder(getOrder(orderId));
+          } else {
+            // 【Fix33】订单刚创建、任务尚未写入（API调用中或localStorage被异步覆盖），静默退出等待后续触发
+            console.log('订单无任务，等待任务写入:', order.id, order.status);
+          }
           break;
         } else {
           // 未知状态，标记为error并退出，防止无限重试
@@ -1074,11 +1102,19 @@ function LoadApp() {
       let cancelled = false;
 
       const processNextActiveOrder = async () => {
+        // 【Fix39】记录本轮已处理的订单ID，每个订单每轮最多处理一次，防止死循环
+        const processedIds = new Set<string>();
         while (!cancelled) {
+          if (pollingRef.current) {
+            console.log('[列表页] 工作流进行中，跳过本轮处理');
+            break;
+          }
+
           const allOrders = getUserOrders(appKey);
           const activeOrder = allOrders.find(o =>
             o.status !== 'done' && o.status !== 'error' &&
-            !o.tasks.some(t => t.status === 'wait_confirm')
+            !o.tasks.some(t => t.status === 'wait_confirm') &&
+            !processedIds.has(o.id)
           );
 
           if (!activeOrder) {
@@ -1086,6 +1122,7 @@ function LoadApp() {
             break;
           }
 
+          processedIds.add(activeOrder.id);
           console.log('[列表页] 开始处理订单:', activeOrder.movieName, activeOrder.id);
           await resumeOrderWorkflow(activeOrder.id);
           if (!cancelled) {

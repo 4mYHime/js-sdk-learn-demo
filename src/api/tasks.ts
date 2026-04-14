@@ -198,9 +198,16 @@ export async function pollTaskUntilComplete(
   }
 ): Promise<ITaskStatusResponse> {
   const intervalMs = options?.intervalMs ?? 10000;
+  const maxAttempts = options?.maxAttempts ?? 360; // 默认上限360次（~1小时@10s间隔）
   const abortSignal = options?.abortSignal;
+  let attempts = 0;
+  let consecutiveNaN = 0;
   
   while (true) {
+    attempts++;
+    if (attempts > maxAttempts) {
+      throw new Error(`轮询超时：已达到最大尝试次数 ${maxAttempts}`);
+    }
     // 检查是否被中断
     if (abortSignal?.aborted) {
       throw new Error('轮询已取消');
@@ -252,7 +259,13 @@ export async function pollTaskUntilComplete(
       throw new Error('任务已取消');
     }
     if (isNaN(taskStatus)) {
-      console.warn('任务状态异常，原始值:', status!.api_response?.data?.status, '完整响应:', JSON.stringify(status!).slice(0, 500));
+      consecutiveNaN++;
+      console.warn(`任务状态异常(${consecutiveNaN}/30)，原始值:`, status!.api_response?.data?.status, '完整响应:', JSON.stringify(status!).slice(0, 500));
+      if (consecutiveNaN >= 30) {
+        throw new Error('任务状态持续异常，停止轮询');
+      }
+    } else {
+      consecutiveNaN = 0;
     }
     
     // 等待间隔，支持：abort 中断、标签页切回前台立即唤醒（避免后台节流导致延迟）
