@@ -1,5 +1,6 @@
 // 订单和任务数据存储模块
 import { apiListOrders, apiSaveOrder, apiUpdateStatus, apiUpdateTask } from './api/orders';
+import { normalizeOrderFromBackend } from './orderData';
 
 // 后端同步：fire-and-forget，不阻塞前端操作
 function syncToBackend(fn: () => Promise<any>) {
@@ -96,7 +97,8 @@ export function getAllOrders(): IOrder[] {
   const data = localStorage.getItem(STORAGE_KEY);
   if (!data) return [];
   try {
-    return JSON.parse(data);
+    const orders = JSON.parse(data);
+    return Array.isArray(orders) ? orders.map(normalizeOrderFromBackend) : [];
   } catch {
     return [];
   }

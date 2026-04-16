@@ -1,13 +1,13 @@
 // 订单管理 API - 通过统一 endpoint 调用后端
 import axios from 'axios';
 import { TOKENS } from './tasks';
+import { normalizeOrderFromBackend, serializeOrderForBackend } from '../orderData';
 
 const ORDER_API_URL = '/api/order_api/run';
 
 // 清理订单数据：去掉后端自动管理的字段，避免冲突
 function cleanOrderData(order: any): any {
-  const { createdAt, updatedAt, ...rest } = order;
-  return rest;
+  return serializeOrderForBackend(order);
 }
 
 function cleanTaskData(task: any): any {
@@ -37,14 +37,14 @@ async function callOrderApi(operation: string, params: any): Promise<any> {
 // 1. 获取用户订单列表
 export async function apiListOrders(appKey: string): Promise<any[]> {
   const res = await callOrderApi('list_orders', { app_key: appKey });
-  return res?.data || [];
+  return Array.isArray(res?.data) ? res.data.map(normalizeOrderFromBackend) : [];
 }
 
 // 2. 获取单个订单
 export async function apiGetOrder(orderId: string): Promise<any | null> {
   try {
     const res = await callOrderApi('get_order', { order_id: orderId });
-    return res?.data || null;
+    return res?.data ? normalizeOrderFromBackend(res.data) : null;
   } catch {
     return null;
   }
