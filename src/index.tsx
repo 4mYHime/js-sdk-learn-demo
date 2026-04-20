@@ -35,6 +35,19 @@ const AUDIO_EXTS = ['mp3', 'wav', 'm4a'];
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg'];
 const FILE_PAGE_SIZE = 20;
 
+// 原创文案计费模型编码：originalMode × originalModel → text_model / model
+// flash_1/pro_1: 纯解说(热门影视) | flash_2/pro_2: 原片混剪(原声混剪) | flash_3/pro_3: 短剧/新剧(冷门/新剧)
+function getOriginalTextModel(originalMode: string, originalModel: 'flash' | 'standard'): string {
+  const tierMap: Record<string, string> = {
+    '热门影视': '1',
+    '原声混剪': '2',
+    '冷门/新剧': '3'
+  };
+  const prefix = originalModel === 'standard' ? 'pro' : 'flash';
+  const tier = tierMap[originalMode] || '1';
+  return `${prefix}_${tier}`;
+}
+
 function LoadApp() {
   // 页面和用户状态
   const [page, setPage] = useState<PageType>('login');
@@ -1229,12 +1242,14 @@ function LoadApp() {
     } else if (taskType === 'original_script') {
       // 原创文案完成 → 下一步是原创剪辑（fast_generate_writing_clip_data）
       requestParams.fast_generate_writing_clip_data_params = {
-        task_id: completedTask?.taskId || ''
+        task_id: completedTask?.taskId || '',
+        model: getOriginalTextModel(order.originalMode, order.originalModel)
       };
     } else if (taskType === 'original_clip') {
       // 原创剪辑完成 → 下一步是合成视频（video_composing）
       requestParams.video_composing_params = {
-        order_num: completedTask?.orderNum || ''
+        order_num: completedTask?.orderNum || '',
+        model: getOriginalTextModel(order.originalMode, order.originalModel)
       };
     }
 
@@ -1762,7 +1777,7 @@ function LoadApp() {
       episodes_data: estimateEpisodesData,
       model_version: _isCustomTemplate ? modelVersion : 'standard',
       narrator_type: narratorType,
-      ...(_isOriginal ? { text_model: originalModel } : {}),
+      ...(_isOriginal ? { text_model: getOriginalTextModel(originalMode, originalModel) } : {}),
       ...(_isCustomTemplate
         ? { learning_srt: selectedViralSrtFile!.file_id }
         : { learning_model_id: selectedTemplate!.learning_model_id })
