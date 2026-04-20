@@ -17,6 +17,7 @@
 - [✅] 总预估接口（`estimate_points` / `estimatePoints`）：原创流程下 `text_model` 使用上述 6 档编码
 - [✅] 分段确认接口（`task_consum_calc_points` / `taskConsumCalcPoints`）：原创两步（`original_script → original_clip`、`original_clip → video`）在对应 `*_params` 内嵌套字段 **`model`**（不是 text_model），值同 6 档编码
 - [✅] 二创流程不受影响
+- [✅] 创建订单 Step2"文案模型"下拉选项的价格提示随 `originalMode` 动态变化（5/15、12/40、12/40）
 
 ## 变更
 
@@ -46,7 +47,19 @@ function getOriginalTextModel(originalMode: string, originalModel: 'flash' | 'st
 + ...(_isOriginal ? { text_model: getOriginalTextModel(originalMode, originalModel) } : {}),
 ```
 
-### 3. 分段确认 `handleEstimateForConfirm`
+### 3. 文案模型下拉框价格提示随 `originalMode` 变化
+
+[src/index.tsx:3592](src/index.tsx#L3592)
+
+选项 label 由硬编码的 `(5点/千字)` / `(15点/千字)` 改为基于 `originalMode` 的 `priceMap` 动态生成：
+
+| `originalMode` | 极速版 | 旗舰版 |
+|---|---|---|
+| 热门影视 | 5 | 15 |
+| 原声混剪 | 12 | 40 |
+| 冷门/新剧 | 12 | 40 |
+
+### 4. 分段确认 `handleEstimateForConfirm`
 
 [src/index.tsx:1243-1254](src/index.tsx#L1243-L1254)
 

@@ -3590,10 +3590,18 @@ function LoadApp() {
                   <div style={{ flex: 1 }}>
                     <label className="form-label">文案模型</label>
                     <Select style={{ width: '100%' }} value={originalModel} onChange={(v: 'flash' | 'standard') => setOriginalModel(v)}
-                      options={[
-                        { label: '极速版 (5点/千字)', value: 'flash' },
-                        { label: '旗舰版 (15点/千字)', value: 'standard' }
-                      ]}
+                      options={(() => {
+                        const priceMap: Record<string, { flash: number; standard: number }> = {
+                          '热门影视': { flash: 5, standard: 15 },
+                          '原声混剪': { flash: 12, standard: 40 },
+                          '冷门/新剧': { flash: 12, standard: 40 }
+                        };
+                        const price = priceMap[originalMode] || priceMap['热门影视'];
+                        return [
+                          { label: `极速版 (${price.flash}点/千字)`, value: 'flash' },
+                          { label: `旗舰版 (${price.standard}点/千字)`, value: 'standard' }
+                        ];
+                      })()}
                     />
                   </div>
                 </div>
